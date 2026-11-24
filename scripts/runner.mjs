@@ -12,6 +12,8 @@
  *   node scripts/runner.mjs <path-to-bundle-or-.musico.js> resolve-stream <remoteTrackId> [--cookie "..."] [--force] [--setting k=v] [--platform macos]
  *   node scripts/runner.mjs <path-to-bundle-or-.musico.js> search <query> [--kind all|track|playlist|album] [--limit 20] [--cursor "..."] [--cookie "..."] [--setting k=v]
  *   node scripts/runner.mjs <path-to-bundle-or-.musico.js> search-lyrics <title> [--artist "..."] [--album "..."] [--duration 213] [--setting k=v]
+ *   node scripts/runner.mjs <path-to-bundle-or-.musico.js> start-qr-login [--setting k=v]
+ *   node scripts/runner.mjs <path-to-bundle-or-.musico.js> poll-qr-login <sessionId> [--setting k=v]
  */
 
 import fs from 'node:fs';
@@ -24,10 +26,11 @@ import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 
-export const VALID_CAPABILITIES = new Set(['playlist', 'tree', 'stream', 'cookie', 'proxy', 'lyrics', 'search']);
+export const VALID_CAPABILITIES = new Set(['playlist', 'tree', 'stream', 'cookie', 'proxy', 'lyrics', 'search', 'qr_login']);
 export const VALID_SEARCH_KINDS = new Set(['track', 'playlist', 'album']);
 export const VALID_SETTING_TYPES = new Set(['boolean', 'string', 'select']);
 export const VALID_PLATFORMS = new Set(['ios', 'macos', 'android', 'windows']);
+export const VALID_QR_LOGIN_STATUSES = new Set(['pending', 'scanned', 'confirmed', 'expired', 'error']);
 
 export const FORBIDDEN_PORTABILITY_GLOBALS = Object.freeze([
   'URL',
@@ -202,6 +205,10 @@ export function validateExports(manifest, exportsObj) {
   }
   if (caps.has('lyrics')) {
     assert.equal(typeof exportsObj.searchLyrics, 'function', 'lyrics extension must export searchLyrics(ctx, req)');
+  }
+  if (caps.has('qr_login')) {
+    assert.equal(typeof exportsObj.startQrLogin, 'function', 'qr_login extension must export startQrLogin(ctx, req)');
+    assert.equal(typeof exportsObj.pollQrLogin, 'function', 'qr_login extension must export pollQrLogin(ctx, req)');
   }
   return exportsObj;
 }
@@ -670,7 +677,10 @@ export function createHostBridge(
           const buf = Buffer.from(await nativeRes.arrayBuffer());
           const hdrs = {};
           nativeRes.headers.forEach((v, k) => { hdrs[k.toLowerCase()] = v; });
-          resp = { status: nativeRes.status, headers: hdrs, bodyBuffer: buf };
+          const setCookies = typeof nativeRes.headers.getSetCookie === 'function'
+            ? nativeRes.headers.getSetCookie()
+            : (hdrs['set-cookie'] ? [hdrs['set-cookie']] : []);
+          resp = { status: nativeRes.status, headers: hdrs, setCookies, bodyBuffer: buf };
         } catch (err) {
           if (err && err.code === 'PERMISSION_DENIED') throw err;
           throw Object.assign(new Error(err?.message || 'HTTP request failed'), { code: 'NETWORK_ERROR' });
@@ -682,7 +692,26 @@ export function createHostBridge(
       const status = resp.status;
       const lowerHeaders = {};
       for (const [k, v] of Object.entries(resp.headers || {})) {
-        lowerHeaders[k.toLowerCase()] = String(v);
+        lowerHeaders[k.toLowerCase()] = Array.isArray(v) ? v.join(', ') : String(v);
+      }
+
+      const setCookies = [];
+      if (Array.isArray(resp.setCookies)) {
+        for (const sc of resp.setCookies) {
+          if (typeof sc === 'string' && sc.trim()) setCookies.push(sc);
+        }
+      } else {
+        for (const [k, v] of Object.entries(resp.headers || {})) {
+          if (k.toLowerCase() === 'set-cookie') {
+            if (Array.isArray(v)) {
+              for (const sc of v) {
+                if (typeof sc === 'string' && sc.trim()) setCookies.push(sc);
+              }
+            } else if (typeof v === 'string' && v.trim()) {
+              setCookies.push(v);
+            }
+          }
+        }
       }
 
       if (followRedirects && [301, 302, 303, 307, 308].includes(status) && lowerHeaders.location) {
@@ -711,6 +740,7 @@ export function createHostBridge(
         status,
         finalUrl: currentUrl,
         headers: lowerHeaders,
+        setCookies,
         text: capped.toString('utf8')
       };
       if (req?.returnBytes === true || capped.length <= 1024 * 1024) {
@@ -880,6 +910,47 @@ export async function runSearchLyrics(ext, bridge, req, timeoutMs = 15000) {
   throw Object.assign(new Error('searchLyrics() must return an array or { candidates | results } object'), {
     code: 'EXTENSION_RUNTIME_ERROR'
   });
+}
+
+export async function runStartQrLogin(ext, bridge, req = {}, timeoutMs = 15000) {
+  assert.equal(typeof ext.exportsObj.startQrLogin, 'function', 'Extension must export startQrLogin(ctx, req)');
+  const result = await invokeWithTimeout(() => ext.exportsObj.startQrLogin(bridge.ctx, req || {}), timeoutMs);
+  assert.ok(result && typeof result === 'object' && !Array.isArray(result), 'startQrLogin() must return an object');
+  const sessionId = typeof result.sessionId === 'string' ? result.sessionId.trim() : '';
+  assert.ok(sessionId.length > 0, 'startQrLogin() must return a non-empty sessionId');
+  const rawQr = typeof result.qrContent === 'string' && result.qrContent.trim()
+    ? result.qrContent.trim()
+    : (typeof result.qrUrl === 'string' ? result.qrUrl.trim() : '');
+  assert.ok(rawQr.length > 0, 'startQrLogin() must return a non-empty qrContent');
+  assert.ok(Buffer.byteLength(rawQr, 'utf8') <= 512, 'startQrLogin() qrContent must not exceed 512 UTF-8 bytes');
+
+  const rawPoll = result.pollIntervalMs;
+  const pollIntervalMs = typeof rawPoll === 'number' && Number.isFinite(rawPoll)
+    ? Math.min(10000, Math.max(1000, Math.round(rawPoll)))
+    : 2000;
+  const expiresAtMs = typeof result.expiresAtMs === 'number' && Number.isFinite(result.expiresAtMs) && result.expiresAtMs > 0
+    ? Math.floor(result.expiresAtMs)
+    : null;
+  const message = typeof result.message === 'string' && result.message.trim() ? result.message.trim() : null;
+
+  return { sessionId, qrContent: rawQr, expiresAtMs, pollIntervalMs, message };
+}
+
+export async function runPollQrLogin(ext, bridge, req, timeoutMs = 15000) {
+  assert.equal(typeof ext.exportsObj.pollQrLogin, 'function', 'Extension must export pollQrLogin(ctx, req)');
+  const sessionId = String(req?.sessionId || '').trim();
+  assert.ok(sessionId.length > 0, 'pollQrLogin() requires sessionId');
+  const result = await invokeWithTimeout(() => ext.exportsObj.pollQrLogin(bridge.ctx, { sessionId }), timeoutMs);
+  assert.ok(result && typeof result === 'object' && !Array.isArray(result), 'pollQrLogin() must return an object');
+  const status = String(result.status || '').trim().toLowerCase();
+  assert.ok(VALID_QR_LOGIN_STATUSES.has(status), `Invalid pollQrLogin() status: ${result.status}`);
+  const cookie = typeof result.cookie === 'string' && result.cookie.trim() ? result.cookie.trim() : null;
+  if (status === 'confirmed') {
+    assert.ok(cookie !== null, 'pollQrLogin() confirmed status requires a non-empty cookie');
+  }
+  const accountName = typeof result.accountName === 'string' && result.accountName.trim() ? result.accountName.trim() : null;
+  const message = typeof result.message === 'string' && result.message.trim() ? result.message.trim() : null;
+  return { status, cookie, accountName, message };
 }
 
 export async function runSelfTest() {
@@ -1052,6 +1123,45 @@ export async function runSelfTest() {
   assert.equal(bridge.ctx.env.platform, 'ios');
   assert.equal(bridge.ctx.env.apiVersion, 1);
 
+  // 6. Verify qr_login manifest, hooks, and setCookies bridge forwarding
+  const qrSource = `
+    var manifest = {
+      apiVersion: 1,
+      id: 'com.test.qr',
+      name: 'QR Probe',
+      version: '1.0.0',
+      capabilities: ['search', 'qr_login'],
+      permissions: { hosts: ['qr.example.com'] }
+    };
+    async function search() { return { items: [], nextCursor: null }; }
+    async function startQrLogin(ctx) {
+      return { sessionId: 'sess-1', qrContent: 'https://qr.example.com/k/sess-1', pollIntervalMs: 1500 };
+    }
+    async function pollQrLogin(ctx, req) {
+      var res = await ctx.http.request({ method: 'GET', url: 'https://qr.example.com/check?id=' + req.sessionId });
+      var cookie = (res.setCookies || []).map(function(s) { return String(s).split(';')[0]; }).join('; ');
+      return { status: 'confirmed', cookie: cookie, accountName: 'ProbeUser' };
+    }
+    module.exports = { manifest: manifest, search: search, startQrLogin: startQrLogin, pollQrLogin: pollQrLogin };
+  `;
+  const qrManifest = validateManifest(evaluateCommonJS(qrSource, { strict: true, staticCheck: true }).manifest);
+  const qrExports = evaluateCommonJS(qrSource, { strict: true, staticCheck: true });
+  validateExports(qrManifest, qrExports);
+  const qrExt = { manifest: qrManifest, source: qrSource, exportsObj: qrExports };
+  const qrBridge = createHostBridge(qrManifest, {
+    httpResponder: async () => ({
+      status: 200,
+      headers: { 'set-cookie': ['SID=qr_secret_1; Path=/; HttpOnly', 'CSRF=c2; Path=/'] },
+      text: '{}'
+    })
+  });
+  const qrSession = await runStartQrLogin(qrExt, qrBridge);
+  assert.equal(qrSession.sessionId, 'sess-1');
+  const qrPoll = await runPollQrLogin(qrExt, qrBridge, { sessionId: qrSession.sessionId });
+  assert.equal(qrPoll.status, 'confirmed');
+  assert.equal(qrPoll.cookie, 'SID=qr_secret_1; CSRF=c2');
+  assert.equal(qrPoll.accountName, 'ProbeUser');
+
   return {
     ok: true,
     checkedForbiddenGlobals: FORBIDDEN_PORTABILITY_GLOBALS.length
@@ -1083,14 +1193,18 @@ async function main() {
     return;
   }
 
-  if (filteredArgs.length < 3) {
+  if (filteredArgs.length < 2 || (filteredArgs.length < 3 && filteredArgs[1] !== 'start-qr-login')) {
     console.error(
-      'Usage: node scripts/runner.mjs [--self-test | --check <path> [--compat] | <path> <can-handle|fetch-collection|fetch-folder|resolve-stream|search|search-lyrics> <target> [options]]'
+      'Usage: node scripts/runner.mjs [--self-test | --check <path> [--compat] | <path> <can-handle|fetch-collection|fetch-folder|resolve-stream|search|search-lyrics|start-qr-login|poll-qr-login> [target] [options]]'
     );
     process.exit(2);
   }
 
-  const [extPath, command, target, ...rest] = filteredArgs;
+  const extPath = filteredArgs[0];
+  const command = filteredArgs[1];
+  const hasPositionalTarget = command !== 'start-qr-login';
+  const target = hasPositionalTarget ? filteredArgs[2] : '';
+  const rest = hasPositionalTarget ? filteredArgs.slice(3) : filteredArgs.slice(2);
   let cookie = null;
   let cursor = null;
   let depth = 1;
@@ -1143,6 +1257,10 @@ async function main() {
     output = await runSearch(ext, bridge, { query: target, kind, limit, cursor, cookie }, 15000);
   } else if (command === 'search-lyrics') {
     output = await runSearchLyrics(ext, bridge, { title: target, artist, album, durationSec }, 15000);
+  } else if (command === 'start-qr-login') {
+    output = await runStartQrLogin(ext, bridge, {}, 15000);
+  } else if (command === 'poll-qr-login') {
+    output = await runPollQrLogin(ext, bridge, { sessionId: target }, 15000);
   } else {
     throw new Error(`Unknown command: ${command}`);
   }

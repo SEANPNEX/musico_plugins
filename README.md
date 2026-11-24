@@ -7,7 +7,7 @@ Private Musico API v1 JavaScript extensions (`.musico.js` single-file scripts an
 | Plugin | ID | Capabilities | Entry File | Docs |
 |---|---|---|---|---|
 | **YouTube & Bilibili Search** | `com.seanpnex.musico.yt-bili-search` | `search`, `playlist`, `stream`, `cookie`, `proxy` | [`plugins/yt-bili-search/yt-bili-search.musico.js`](plugins/yt-bili-search/yt-bili-search.musico.js) | [`plugins/yt-bili-search/README.md`](plugins/yt-bili-search/README.md) |
-| **NetEase Cloud Music** | `com.seanpnex.musico.netease` | `playlist`, `stream`, `search`, `cookie`, `proxy` | [`plugins/netease-cloud/netease-cloud.musico.js`](plugins/netease-cloud/netease-cloud.musico.js) | [`plugins/netease-cloud/README.md`](plugins/netease-cloud/README.md) |
+| **NetEase Cloud Music** | `com.seanpnex.musico.netease` | `playlist`, `stream`, `search`, `cookie`, `qr_login`, `proxy` | [`plugins/netease-cloud/netease-cloud.musico.js`](plugins/netease-cloud/netease-cloud.musico.js) | [`plugins/netease-cloud/README.md`](plugins/netease-cloud/README.md) |
 
 ## Installing in Musico
 

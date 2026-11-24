@@ -45,3 +45,18 @@ node plugins/netease-cloud/netease-cloud.test.mjs
 # Validate via Musico mock-runner
 node /Users/sean/workspace/musicplayer/docs/extensions/tools/mock-runner.mjs plugins/netease-cloud/netease-cloud.musico.js can-handle "https://music.163.com/#/playlist?id=6792103822"
 ```
+
+## QR Code Login (v1.1.0)
+
+`netease-cloud.musico.js` v1.1.0 declares the `"qr_login"` capability and exports `startQrLogin(ctx)` and `pollQrLogin(ctx, req)`:
+
+- Open the extension card in Musico (**Sign In with QR Code**) and scan with the NetEase Cloud Music mobile app.
+- On confirmation (`803`), Musico automatically extracts and saves your private session cookie (`MUSIC_U` / `__csrf`) without logging secrets.
+- Manual cookie entry remains supported as a fallback.
+
+Test QR login hooks locally with the conformance runner:
+
+```bash
+node ../../scripts/runner.mjs ./netease-cloud.musico.js start-qr-login
+node ../../scripts/runner.mjs ./netease-cloud.musico.js poll-qr-login <sessionId>
+```

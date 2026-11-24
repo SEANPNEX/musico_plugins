@@ -11,8 +11,10 @@ import {
   loadExtension,
   runCanHandle,
   runFetchCollection,
+  runPollQrLogin,
   runResolveStream,
   runSearch,
+  runStartQrLogin,
   scanPortabilityViolations,
   validateHostPattern
 } from '../../scripts/runner.mjs';
@@ -77,16 +79,16 @@ test('manifest, exports, host allowlist, and strict portability check', () => {
   assert.equal(m.apiVersion, 1);
   assert.equal(m.id, 'com.seanpnex.musico.netease');
   assert.equal(m.name, 'NetEase Cloud Music');
-  assert.equal(m.version, '1.0.0');
+  assert.equal(m.version, '1.1.0');
   assert.equal(m.author, 'SEANPNEX');
   assert.equal(m.badgeLabel, 'NetEase');
-  assert.deepEqual(plain(m.capabilities), ['playlist', 'stream', 'search', 'cookie', 'proxy']);
+  assert.deepEqual(plain(m.capabilities), ['playlist', 'stream', 'search', 'cookie', 'qr_login', 'proxy']);
   assert.equal(m.capabilities.includes('lyrics'), false);
   assert.deepEqual(plain(m.searchKinds), ['track', 'playlist', 'album']);
 
   assert.deepEqual(
     Object.keys(ext.exportsObj).sort(),
-    ['canHandle', 'fetchCollection', 'manifest', 'resolveStream', 'search']
+    ['canHandle', 'fetchCollection', 'manifest', 'pollQrLogin', 'resolveStream', 'search', 'startQrLogin']
   );
 
   for (const host of m.permissions.hosts) {
@@ -671,4 +673,114 @@ test('maps standard error codes cleanly across HTTP and NetEase JSON status code
       `Expected ${expectedCode} for ${JSON.stringify(resp)}`
     );
   }
+});
+
+test('qr_login startQrLogin and pollQrLogin follow Music163Api-Go EAPI flow and protect secrets', async () => {
+  const ext = loadExtension(PLUGIN_PATH, { strict: true });
+
+  const secretToken = 'QR_SECRET_MUSIC_U_99887766';
+  const csrfToken = 'csrf_qr_token_42';
+  let checkPhase = 'pending';
+
+  const bridge = createHostBridge(ext.manifest, {
+    httpResponder: async ({ url, headers, body }) => {
+      if (url === 'https://music.163.com/eapi/login/qrcode/unikey') {
+        const p = decodeAndVerifyEapiBody(body, '/api/login/qrcode/unikey');
+        assert.equal(p.type, '3');
+        return {
+          status: 200,
+          headers: {},
+          text: JSON.stringify({ code: 200, unikey: 'unikey-1234-abcd' })
+        };
+      }
+      if (url === 'https://music.163.com/eapi/login/qrcode/client/login') {
+        const p = decodeAndVerifyEapiBody(body, '/api/login/qrcode/client/login');
+        assert.equal(p.key, 'unikey-1234-abcd');
+        assert.equal(p.type, '3');
+        if (checkPhase === 'pending') {
+          return { status: 200, headers: {}, text: JSON.stringify({ code: 801, message: '等待扫码' }) };
+        }
+        if (checkPhase === 'scanned') {
+          return { status: 200, headers: {}, text: JSON.stringify({ code: 802, nickname: 'ScanNick', message: '待确认' }) };
+        }
+        if (checkPhase === 'expired') {
+          return { status: 200, headers: {}, text: JSON.stringify({ code: 800, message: '二维码不存在或已过期' }) };
+        }
+        if (checkPhase === 'confirmed-array') {
+          return {
+            status: 200,
+            headers: {
+              'set-cookie': [
+                `MUSIC_U=${secretToken}; Max-Age=2592000; Expires=Thu, 31 Dec 2099 23:59:59 GMT; Path=/; HttpOnly`,
+                `__csrf=${csrfToken}; Expires=Thu, 31 Dec 2099 23:59:59 GMT; Path=/`
+              ]
+            },
+            text: JSON.stringify({ code: 803, message: '授权登陆成功' })
+          };
+        }
+        if (checkPhase === 'confirmed-joined') {
+          return {
+            status: 200,
+            headers: {
+              'set-cookie': `NMTID=nmt; Expires=Thu, 31 Dec 2099 23:59:59 GMT; Path=/, MUSIC_U=${secretToken}; Expires=Thu, 31 Dec 2099 23:59:59 GMT; Path=/; HttpOnly, __csrf=${csrfToken}; Path=/`
+            },
+            text: JSON.stringify({ code: 803 })
+          };
+        }
+        return {
+          status: 200,
+          headers: {},
+          text: JSON.stringify({ code: 803 })
+        };
+      }
+      if (url === 'https://music.163.com/eapi/w/nuser/account/get') {
+        decodeAndVerifyEapiBody(body, '/api/w/nuser/account/get');
+        assert.match(headers.Cookie, new RegExp(`MUSIC_U=${secretToken}`));
+        return {
+          status: 200,
+          headers: {},
+          text: JSON.stringify({ code: 200, profile: { nickname: 'CloudAccount' } })
+        };
+      }
+      return { status: 404, headers: {}, text: '' };
+    }
+  });
+
+  const session = await runStartQrLogin(ext, bridge);
+  assert.equal(session.sessionId, 'unikey-1234-abcd');
+  assert.equal(session.qrContent, 'https://music.163.com/login?codekey=unikey-1234-abcd');
+  assert.equal(session.pollIntervalMs, 2000);
+  assert.ok(session.expiresAtMs > Date.now());
+
+  const pendingRes = await runPollQrLogin(ext, bridge, { sessionId: session.sessionId });
+  assert.equal(pendingRes.status, 'pending');
+
+  checkPhase = 'scanned';
+  const scannedRes = await runPollQrLogin(ext, bridge, { sessionId: session.sessionId });
+  assert.equal(scannedRes.status, 'scanned');
+  assert.equal(scannedRes.accountName, 'ScanNick');
+
+  checkPhase = 'expired';
+  const expiredRes = await runPollQrLogin(ext, bridge, { sessionId: session.sessionId });
+  assert.equal(expiredRes.status, 'expired');
+
+  checkPhase = 'confirmed-array';
+  const confirmedArray = await runPollQrLogin(ext, bridge, { sessionId: session.sessionId });
+  assert.equal(confirmedArray.status, 'confirmed');
+  assert.equal(confirmedArray.cookie, `MUSIC_U=${secretToken}; __csrf=${csrfToken}`);
+  assert.equal(confirmedArray.accountName, 'CloudAccount');
+
+  checkPhase = 'confirmed-joined';
+  const confirmedJoined = await runPollQrLogin(ext, bridge, { sessionId: session.sessionId });
+  assert.equal(confirmedJoined.status, 'confirmed');
+  assert.equal(confirmedJoined.cookie, `MUSIC_U=${secretToken}; __csrf=${csrfToken}`);
+
+  checkPhase = 'missing-cookie';
+  const missingCookie = await runPollQrLogin(ext, bridge, { sessionId: session.sessionId });
+  assert.equal(missingCookie.status, 'error');
+
+  assert.equal(
+    bridge.logs.some((l) => l.message.includes(secretToken) || l.message.includes(csrfToken) || l.message.includes('MUSIC_U')),
+    false
+  );
 });

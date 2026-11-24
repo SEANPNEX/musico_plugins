@@ -4,11 +4,11 @@ var manifest = {
   apiVersion: 1,
   id: 'com.seanpnex.musico.netease',
   name: 'NetEase Cloud Music',
-  version: '1.0.0',
+  version: '1.1.0',
   author: 'SEANPNEX',
-  description: 'Playlists, albums, artists, single tracks, cloud search, and EAPI stream resolution for NetEase Cloud Music.',
+  description: 'Playlists, albums, artists, single tracks, cloud search, QR code login, and EAPI stream resolution for NetEase Cloud Music.',
   badgeLabel: 'NetEase',
-  capabilities: ['playlist', 'stream', 'search', 'cookie', 'proxy'],
+  capabilities: ['playlist', 'stream', 'search', 'cookie', 'qr_login', 'proxy'],
   searchKinds: ['track', 'playlist', 'album'],
   urlPatterns: [
     '^https?://(y\\.)?music\\.163\\.com/(#/)?(m/)?(playlist|album|song|artist)(\\?.*id=\\d+|/\\d+)',
@@ -681,7 +681,7 @@ function parseEapiResponse(res) {
   throw extError('NETWORK_ERROR', 'Unexpected non-JSON response from NetEase API.');
 }
 
-async function callEapi(ctx, apiPath, payloadObj, rawCookie, options) {
+async function callEapiWithResponse(ctx, apiPath, payloadObj, rawCookie, options) {
   var opts = options || {};
   var auth = buildCookieAndHeader(ctx, rawCookie);
   var bodyObj = {};
@@ -741,7 +741,15 @@ async function callEapi(ctx, apiPath, payloadObj, rawCookie, options) {
   if (apiCode !== 200 && !opts.allowNon200) {
     throw extError('NETWORK_ERROR', 'NetEase API returned code ' + String(apiCode));
   }
-  return parsed;
+  return {
+    data: parsed,
+    response: res
+  };
+}
+
+async function callEapi(ctx, apiPath, payloadObj, rawCookie, options) {
+  var result = await callEapiWithResponse(ctx, apiPath, payloadObj, rawCookie, options);
+  return result.data;
 }
 
 function decodeURIComponentSafe(s) {
@@ -1785,10 +1793,169 @@ async function search(ctx, req) {
   };
 }
 
+function splitSetCookieHeader(rawHeader) {
+  if (!rawHeader || typeof rawHeader !== 'string') return [];
+  var raw = rawHeader.trim();
+  if (!raw) return [];
+  var parts = raw.split(/,(?=\s*[^;=,\s]+=)/);
+  var out = [];
+  for (var i = 0; i < parts.length; i++) {
+    var seg = parts[i].trim();
+    if (seg) out.push(seg);
+  }
+  return out;
+}
+
+function extractCookiesFromResponse(res) {
+  var list = [];
+  if (res && Array.isArray(res.setCookies) && res.setCookies.length > 0) {
+    for (var s = 0; s < res.setCookies.length; s++) {
+      var expanded = splitSetCookieHeader(res.setCookies[s]);
+      for (var e = 0; e < expanded.length; e++) {
+        list.push(expanded[e]);
+      }
+    }
+  } else if (res && res.headers && typeof res.headers['set-cookie'] === 'string') {
+    list = splitSetCookieHeader(res.headers['set-cookie']);
+  }
+
+  var musicU = '';
+  var csrf = '';
+  for (var i = 0; i < list.length; i++) {
+    var entry = String(list[i] || '').trim();
+    if (!entry) continue;
+    var semi = entry.indexOf(';');
+    var firstPair = (semi >= 0 ? entry.slice(0, semi) : entry).trim();
+    var eq = firstPair.indexOf('=');
+    if (eq <= 0) continue;
+    var name = firstPair.slice(0, eq).trim();
+    var val = firstPair.slice(eq + 1).trim();
+    if (!val) continue;
+    if (name === 'MUSIC_U' && !musicU) {
+      musicU = val;
+    } else if (name === '__csrf' && !csrf) {
+      csrf = val;
+    }
+  }
+
+  return {
+    musicU: musicU,
+    csrf: csrf
+  };
+}
+
+async function startQrLogin(ctx) {
+  var data = await callEapi(ctx, '/api/login/qrcode/unikey', { type: '3' }, null);
+  var unikey = data && typeof data.unikey === 'string' ? data.unikey.trim() : '';
+  if (!unikey) {
+    throw extError('NETWORK_ERROR', 'NetEase QR unikey response missing unikey.');
+  }
+  ctx.log.info('started NetEase QR login session');
+  return {
+    sessionId: unikey,
+    qrContent: 'https://music.163.com/login?codekey=' + unikey,
+    pollIntervalMs: 2000,
+    expiresAtMs: Date.now() + 180000
+  };
+}
+
+async function pollQrLogin(ctx, req) {
+  var sessionId = req && req.sessionId ? String(req.sessionId).trim() : '';
+  if (!sessionId) {
+    return {
+      status: 'error',
+      message: 'Missing QR login sessionId.'
+    };
+  }
+
+  var result = await callEapiWithResponse(
+    ctx,
+    '/api/login/qrcode/client/login',
+    { key: sessionId, type: '3' },
+    null,
+    { allowNon200: true }
+  );
+  var data = result.data || {};
+  var code = typeof data.code === 'number' ? data.code : 0;
+
+  if (code === 801) {
+    return {
+      status: 'pending',
+      message: typeof data.message === 'string' && data.message ? data.message : undefined
+    };
+  }
+
+  if (code === 802) {
+    var scannedNick = typeof data.nickname === 'string' && data.nickname.trim() ? data.nickname.trim() : '';
+    return {
+      status: 'scanned',
+      accountName: scannedNick || undefined,
+      message: typeof data.message === 'string' && data.message ? data.message : undefined
+    };
+  }
+
+  if (code === 800) {
+    return {
+      status: 'expired',
+      message: typeof data.message === 'string' && data.message ? data.message : 'QR code expired.'
+    };
+  }
+
+  if (code === 803) {
+    var extracted = extractCookiesFromResponse(result.response);
+    if (!extracted.musicU) {
+      return {
+        status: 'error',
+        message: 'Login confirmed, but NetEase did not return a MUSIC_U session cookie.'
+      };
+    }
+
+    var cookieParts = ['MUSIC_U=' + extracted.musicU];
+    if (extracted.csrf) {
+      cookieParts.push('__csrf=' + extracted.csrf);
+    }
+    var cookieStr = cookieParts.join('; ');
+
+    var accountName = typeof data.nickname === 'string' && data.nickname.trim() ? data.nickname.trim() : '';
+    if (!accountName) {
+      try {
+        var accountData = await callEapi(
+          ctx,
+          '/api/w/nuser/account/get',
+          {},
+          cookieStr,
+          { timeoutMs: 5000, allowNon200: true }
+        );
+        if (accountData && accountData.profile && typeof accountData.profile.nickname === 'string') {
+          accountName = accountData.profile.nickname.trim();
+        }
+      } catch (e) {
+        // Account profile lookup is best-effort once MUSIC_U is captured.
+      }
+    }
+
+    ctx.log.info('confirmed NetEase QR login');
+    return {
+      status: 'confirmed',
+      cookie: cookieStr,
+      accountName: accountName || undefined
+    };
+  }
+
+  return {
+    status: 'error',
+    message: typeof data.message === 'string' && data.message
+      ? data.message
+      : 'Unexpected QR login status code ' + String(code)
+  };
+}
+
 module.exports = {
   manifest: manifest,
   canHandle: canHandle,
   fetchCollection: fetchCollection,
   resolveStream: resolveStream,
-  search: search
+  search: search,
+  startQrLogin: startQrLogin,
+  pollQrLogin: pollQrLogin
 };
