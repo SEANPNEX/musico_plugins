@@ -95,11 +95,15 @@ export function packPlugin({ slug, entryPath, iconPath = null, distDir }) {
   const packedExt = loadExtension(outFile, { strict: true, staticCheck: true });
   assert.equal(packedExt.manifest.id, ext.manifest.id, `Packed manifest.id mismatch for ${slug}`);
   assert.equal(packedExt.manifest.entry, 'index.js', `Packed manifest.entry mismatch for ${slug}`);
+  if (ext.manifest.updateUrl !== undefined) {
+    assert.equal(packedExt.manifest.updateUrl, ext.manifest.updateUrl, `Packed manifest.updateUrl mismatch for ${slug}`);
+  }
 
   return {
     slug,
     id: ext.manifest.id,
     version: ext.manifest.version,
+    updateUrl: ext.manifest.updateUrl || null,
     outFile,
     sizeBytes: fs.statSync(outFile).size,
     unzipListing

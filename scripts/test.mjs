@@ -68,7 +68,8 @@ export async function runAllTests({ rootDir = DEFAULT_ROOT } = {}) {
     const rel = path.relative(rootDir, filePath);
     try {
       const res = runConformance(filePath, { strict: true });
-      console.log(`[PASS] conformance ${rel} (${res.id}@${res.version}, caps=${res.capabilities.join(',')})`);
+      const updateNote = res.updateUrl ? `, updateUrl=ok` : '';
+      console.log(`[PASS] conformance ${rel} (${res.id}@${res.version}, caps=${res.capabilities.join(',')}${updateNote})`);
     } catch (err) {
       failures.push({ label: `conformance ${rel}`, error: err });
       console.error(`[FAIL] conformance ${rel}:`, err?.message || err);

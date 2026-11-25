@@ -2,19 +2,18 @@
 
 var manifest = {
   apiVersion: 1,
-  id: 'com.seanpnex.musico.yt-bili-search',
-  name: 'YouTube & Bilibili Search',
+  id: 'youtube-search',
+  name: 'YouTube Search',
   version: '1.0.0',
   author: 'SEANPNEX',
-  description: 'Search songs, albums, and playlists from YouTube, YouTube Music, and Bilibili, plus import playlists, albums, favlists, and collections.',
-  badgeLabel: 'YT / Bili',
+  description: 'Search songs, albums, and playlists from YouTube and YouTube Music, plus import playlists, albums, mixes, and single videos.',
+  badgeLabel: 'YouTube',
+  updateUrl: 'https://github.com/SEANPNEX/musico_plugins/releases/download/youtube-search-v1.0.0/youtube-search.musicoext',
   capabilities: ['search', 'playlist', 'stream', 'cookie', 'proxy'],
   searchKinds: ['track', 'playlist', 'album'],
   urlPatterns: [
-    '^https?://(www\\.|m\\.|music\\.)?youtube\\.com/(watch|playlist|browse|shorts)',
-    '^https?://youtu\\.be/[A-Za-z0-9_-]{11}',
-    '^https?://(www\\.|m\\.|space\\.)?bilibili\\.com/',
-    '^https?://b23\\.tv/[A-Za-z0-9]+'
+    '^https?://(www\\.|m\\.|music\\.)?youtube\\.com/(watch|playlist|browse|shorts|live|embed)',
+    '^https?://youtu\\.be/[A-Za-z0-9_-]{11}'
   ],
   permissions: {
     hosts: [
@@ -25,33 +24,10 @@ var manifest = {
       '*.googlevideo.com',
       'i.ytimg.com',
       'lh3.googleusercontent.com',
-      'yt3.googleusercontent.com',
-      'api.bilibili.com',
-      'www.bilibili.com',
-      'm.bilibili.com',
-      'space.bilibili.com',
-      'search.bilibili.com',
-      'b23.tv',
-      '*.bilivideo.com',
-      '*.bilivideo.cn',
-      '*.bilivideo.net',
-      '*.akamaized.net',
-      '*.hdslb.com',
-      '*.szbdyd.com'
+      'yt3.googleusercontent.com'
     ]
   },
   settings: [
-    {
-      key: 'source',
-      label: 'Search Sources',
-      type: 'select',
-      default: 'both',
-      options: [
-        { value: 'both', label: 'YouTube + Bilibili' },
-        { value: 'youtube', label: 'YouTube Only' },
-        { value: 'bilibili', label: 'Bilibili Only' }
-      ]
-    },
     {
       key: 'youtubeMode',
       label: 'YouTube Search Mode',
@@ -60,29 +36,6 @@ var manifest = {
       options: [
         { value: 'music', label: 'YouTube Music' },
         { value: 'youtube', label: 'YouTube Main' }
-      ]
-    },
-    {
-      key: 'biliSearchOrder',
-      label: 'Bilibili Search Order',
-      type: 'select',
-      default: 'totalrank',
-      options: [
-        { value: 'totalrank', label: 'Relevance' },
-        { value: 'click', label: 'Most Played' },
-        { value: 'pubdate', label: 'Newest' },
-        { value: 'stow', label: 'Most Favorited' }
-      ]
-    },
-    {
-      key: 'cookieScope',
-      label: 'Extension Cookie Scope',
-      type: 'select',
-      default: 'auto',
-      options: [
-        { value: 'auto', label: 'Auto-detect' },
-        { value: 'youtube', label: 'YouTube Cookie' },
-        { value: 'bilibili', label: 'Bilibili Cookie' }
       ]
     },
     {
@@ -103,18 +56,6 @@ var WEB_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.
 var ANONYMOUS_YT_COOKIE = 'SOCS=CAI';
 var VISITOR_DATA_KV_KEY = 'yt:visitorData';
 var VISITOR_DATA_TTL_SEC = 1800;
-var BUVID3_KV_KEY = 'bili:buvid3';
-var BUVID3_TTL_SEC = 86400;
-var WBI_KEY_KV_KEY = 'bili:wbiMixinKey';
-var WBI_KEY_TTL_SEC = 21600;
-var FALLBACK_BUVID3 = 'B0E2A3F1-1234-4567-89AB-CDEF01234567infoc';
-
-var WBI_MIXIN_TAB = [
-  46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
-  27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13,
-  37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4,
-  22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52
-];
 
 var YT_CLIENTS = {
   WEB_REMIX: {
@@ -272,15 +213,6 @@ function kvSetSafe(ctx, key, val, ttlSec) {
   }
 }
 
-function kvRemoveSafe(ctx, key) {
-  if (!ctx || !ctx.kv || typeof ctx.kv.remove !== 'function') return;
-  try {
-    ctx.kv.remove(key);
-  } catch (e) {
-    // Best-effort cache delete.
-  }
-}
-
 function logWarnSafe(ctx, msg) {
   if (ctx && ctx.log && typeof ctx.log.warn === 'function') {
     ctx.log.warn(String(msg));
@@ -294,12 +226,6 @@ function safeDecodeURIComponent(str) {
   } catch (e) {
     return s;
   }
-}
-
-function encodeRfc3986(str) {
-  return encodeURIComponent(String(str == null ? '' : str)).replace(/[!'()*]/g, function (c) {
-    return '%' + c.charCodeAt(0).toString(16).toUpperCase();
-  });
 }
 
 function parseQueryString(search) {
@@ -352,48 +278,6 @@ function normalizeHttps(rawUrl) {
   if (s.indexOf('http://') === 0) return 'https://' + s.slice(7);
   if (s.indexOf('https://') === 0) return s;
   return null;
-}
-
-function stripHtmlTags(raw) {
-  return String(raw == null ? '' : raw).replace(/<[^>]*>/g, '');
-}
-
-function decodeHtmlEntities(raw) {
-  var s = String(raw == null ? '' : raw);
-  var named = {
-    amp: '&',
-    lt: '<',
-    gt: '>',
-    quot: '"',
-    apos: '\'',
-    nbsp: ' '
-  };
-  return s.replace(/&(#x[0-9a-fA-F]+|#[0-9]+|amp|lt|gt|quot|apos|nbsp);/g, function (full, entity) {
-    var lower = entity.toLowerCase();
-    if (Object.prototype.hasOwnProperty.call(named, lower)) {
-      return named[lower];
-    }
-    var cp = -1;
-    if (lower.indexOf('#x') === 0) {
-      cp = parseInt(lower.slice(2), 16);
-    } else if (lower.charAt(0) === '#') {
-      cp = parseInt(lower.slice(1), 10);
-    }
-    if (!isFinite(cp) || cp < 0 || cp > 0x10FFFF) {
-      return full;
-    }
-    if (typeof String.fromCodePoint === 'function') {
-      return String.fromCodePoint(cp);
-    }
-    if (cp <= 0xFFFF) {
-      return String.fromCharCode(cp);
-    }
-    return full;
-  });
-}
-
-function cleanBiliText(raw) {
-  return decodeHtmlEntities(stripHtmlTags(raw)).replace(/\s+/g, ' ').trim();
 }
 
 function sanitizeFileName(name, fallback) {
@@ -458,43 +342,6 @@ function parseCookiePairs(cookieStr) {
   return map;
 }
 
-function resolveScopedCookie(ctx, rawCookie, targetPlatform) {
-  var trimmed = String(rawCookie == null ? '' : rawCookie).trim();
-  if (!trimmed) return null;
-  var scope = String(getSetting(ctx, 'cookieScope', 'auto')).toLowerCase();
-  if (scope === 'youtube') {
-    return targetPlatform === 'youtube' ? trimmed : null;
-  }
-  if (scope === 'bilibili') {
-    return targetPlatform === 'bilibili' ? trimmed : null;
-  }
-  var pairs = parseCookiePairs(trimmed);
-  var hasBili = Boolean(
-    pairs.SESSDATA || pairs.bili_jct || pairs.DedeUserID || pairs.buvid3 || pairs.buvid4 || pairs.bili_ticket
-  );
-  var hasYt = Boolean(
-    pairs.SAPISID ||
-    pairs['__Secure-3PAPISID'] ||
-    pairs['__Secure-1PAPISID'] ||
-    pairs.LOGIN_INFO ||
-    pairs.VISITOR_INFO1_LIVE ||
-    pairs.HSID ||
-    pairs.SSID ||
-    pairs.APISID ||
-    pairs.SID ||
-    pairs.SOCS
-  );
-  if (targetPlatform === 'youtube') {
-    if (hasBili && !hasYt) return null;
-    return trimmed;
-  }
-  if (targetPlatform === 'bilibili') {
-    if (hasYt && !hasBili) return null;
-    return trimmed;
-  }
-  return null;
-}
-
 function computeSapisidHash(ctx, cookieStr, origin, timestampSec) {
   if (!cookieStr || !ctx || !ctx.crypto || typeof ctx.crypto.sha1 !== 'function') {
     return null;
@@ -544,16 +391,6 @@ function isYouTubePlaylistId(id) {
   return false;
 }
 
-function normalizeBvid(raw) {
-  var s = String(raw == null ? '' : raw);
-  return s.length >= 2 ? ('BV' + s.slice(2)) : s;
-}
-
-function extractBvidFromText(text) {
-  var m = String(text == null ? '' : text).match(/BV[0-9A-Za-z]{10,}/i);
-  return m ? normalizeBvid(m[0]) : null;
-}
-
 function parseTarget(rawInput) {
   var candidate = extractShareUrl(rawInput);
   if (!candidate) return null;
@@ -563,7 +400,6 @@ function parseTarget(rawInput) {
     var ytId = stripVlPrefix(candidate.slice(3));
     if (isYouTubePlaylistId(ytId)) {
       return {
-        platform: 'youtube',
         targetType: 'playlist',
         listId: ytId,
         videoId: null,
@@ -576,7 +412,6 @@ function parseTarget(rawInput) {
     }
     if (isYouTubeVideoId(ytId)) {
       return {
-        platform: 'youtube',
         targetType: 'video',
         videoId: ytId,
         remoteId: 'yt:' + ytId,
@@ -587,73 +422,11 @@ function parseTarget(rawInput) {
     return null;
   }
 
-  if (candidate.indexOf('bili:') === 0) {
-    var rest = candidate.slice(5);
-    var parts = rest.split(':');
-    if (parts[0] === 'video' && parts[1]) {
-      var bv = extractBvidFromText(parts[1]);
-      if (bv) {
-        return {
-          platform: 'bilibili',
-          targetType: 'video',
-          bvid: bv,
-          aid: null,
-          remoteId: 'bili:video:' + bv,
-          normalizedUrl: 'https://www.bilibili.com/video/' + bv,
-          kind: 'track'
-        };
-      }
-      var avM = parts[1].match(/^av([0-9]+)$/i);
-      if (avM) {
-        return {
-          platform: 'bilibili',
-          targetType: 'video',
-          bvid: null,
-          aid: avM[1],
-          remoteId: 'bili:video:av' + avM[1],
-          normalizedUrl: 'https://www.bilibili.com/video/av' + avM[1],
-          kind: 'track'
-        };
-      }
-    } else if (parts[0] === 'fav' && isDigitsOnly(parts[1])) {
-      return {
-        platform: 'bilibili',
-        targetType: 'fav',
-        mediaId: parts[1],
-        remoteId: 'bili:fav:' + parts[1],
-        normalizedUrl: 'https://www.bilibili.com/medialist/detail/ml' + parts[1],
-        kind: 'playlist'
-      };
-    } else if (parts[0] === 'season' && isDigitsOnly(parts[1]) && isDigitsOnly(parts[2])) {
-      return {
-        platform: 'bilibili',
-        targetType: 'season',
-        mid: parts[1],
-        seasonId: parts[2],
-        remoteId: 'bili:season:' + parts[1] + ':' + parts[2],
-        normalizedUrl: 'https://space.bilibili.com/' + parts[1] + '/lists/' + parts[2] + '?type=season',
-        kind: 'playlist'
-      };
-    } else if (parts[0] === 'series' && isDigitsOnly(parts[1]) && isDigitsOnly(parts[2])) {
-      return {
-        platform: 'bilibili',
-        targetType: 'series',
-        mid: parts[1],
-        seriesId: parts[2],
-        remoteId: 'bili:series:' + parts[1] + ':' + parts[2],
-        normalizedUrl: 'https://space.bilibili.com/' + parts[1] + '/lists/' + parts[2] + '?type=series',
-        kind: 'playlist'
-      };
-    }
-    return null;
-  }
-
   // Bare unambiguous IDs without scheme or slash.
   if (candidate.indexOf('://') < 0 && candidate.indexOf('/') < 0 && candidate.indexOf('.') < 0 && candidate.indexOf(' ') < 0) {
     var stripped = stripVlPrefix(candidate);
     if (isYouTubePlaylistId(stripped)) {
       return {
-        platform: 'youtube',
         targetType: 'playlist',
         listId: stripped,
         videoId: null,
@@ -664,39 +437,13 @@ function parseTarget(rawInput) {
         kind: 'playlist'
       };
     }
-    if (/^BV[0-9A-Za-z]{10,}$/i.test(candidate)) {
-      var bareBv = normalizeBvid(candidate);
+    if (isYouTubeVideoId(candidate)) {
       return {
-        platform: 'bilibili',
         targetType: 'video',
-        bvid: bareBv,
-        aid: null,
-        remoteId: 'bili:video:' + bareBv,
-        normalizedUrl: 'https://www.bilibili.com/video/' + bareBv,
+        videoId: candidate,
+        remoteId: 'yt:' + candidate,
+        normalizedUrl: 'https://www.youtube.com/watch?v=' + candidate,
         kind: 'track'
-      };
-    }
-    var bareAv = candidate.match(/^av([0-9]+)$/i);
-    if (bareAv) {
-      return {
-        platform: 'bilibili',
-        targetType: 'video',
-        bvid: null,
-        aid: bareAv[1],
-        remoteId: 'bili:video:av' + bareAv[1],
-        normalizedUrl: 'https://www.bilibili.com/video/av' + bareAv[1],
-        kind: 'track'
-      };
-    }
-    var bareMl = candidate.match(/^ml([0-9]+)$/i);
-    if (bareMl) {
-      return {
-        platform: 'bilibili',
-        targetType: 'fav',
-        mediaId: bareMl[1],
-        remoteId: 'bili:fav:' + bareMl[1],
-        normalizedUrl: 'https://www.bilibili.com/medialist/detail/ml' + bareMl[1],
-        kind: 'playlist'
       };
     }
     return null;
@@ -715,7 +462,6 @@ function parseTarget(rawInput) {
     var shortList = query.list ? stripVlPrefix(query.list) : null;
     if (shortList) {
       return {
-        platform: 'youtube',
         targetType: 'playlist',
         listId: shortList,
         videoId: shortVid,
@@ -728,7 +474,6 @@ function parseTarget(rawInput) {
     }
     if (shortVid) {
       return {
-        platform: 'youtube',
         targetType: 'video',
         videoId: shortVid,
         remoteId: 'yt:' + shortVid,
@@ -765,7 +510,6 @@ function parseTarget(rawInput) {
           '/playlist?list=' + listId;
       }
       return {
-        platform: 'youtube',
         targetType: 'playlist',
         listId: listId,
         videoId: resolvedVid,
@@ -780,7 +524,6 @@ function parseTarget(rawInput) {
       var browseClean = stripVlPrefix(browseRaw);
       if (browseClean) {
         return {
-          platform: 'youtube',
           targetType: 'playlist',
           listId: browseClean,
           videoId: null,
@@ -793,7 +536,6 @@ function parseTarget(rawInput) {
 
     if (resolvedVid) {
       return {
-        platform: 'youtube',
         targetType: 'video',
         videoId: resolvedVid,
         remoteId: 'yt:' + resolvedVid,
@@ -802,158 +544,6 @@ function parseTarget(rawInput) {
       };
     }
     return null;
-  }
-
-  // Bilibili short link.
-  if (host === 'b23.tv' || host.slice(-7) === '.b23.tv') {
-    var code = segments[0] || '';
-    if (!code) return null;
-    return {
-      platform: 'bilibili',
-      targetType: 'short',
-      url: 'https://b23.tv/' + code,
-      remoteId: 'bili:short:' + code,
-      normalizedUrl: 'https://b23.tv/' + code,
-      kind: 'playlist'
-    };
-  }
-
-  // Bilibili main/space/mobile links.
-  if (host === 'bilibili.com' || host.slice(-13) === '.bilibili.com') {
-    var pathMid = (host === 'space.bilibili.com' && segments[0] && isDigitsOnly(segments[0])) ? segments[0] : null;
-    var fid = isDigitsOnly(query.fid) ? query.fid : (isDigitsOnly(query.media_id) ? query.media_id : null);
-    if (fid) {
-      return {
-        platform: 'bilibili',
-        targetType: 'fav',
-        mediaId: fid,
-        remoteId: 'bili:fav:' + fid,
-        normalizedUrl: 'https://www.bilibili.com/medialist/detail/ml' + fid,
-        kind: 'playlist'
-      };
-    }
-    for (var sIdx = 0; sIdx < segments.length; sIdx++) {
-      var mlMatch = segments[sIdx].match(/^ml([0-9]+)$/i);
-      if (mlMatch) {
-        return {
-          platform: 'bilibili',
-          targetType: 'fav',
-          mediaId: mlMatch[1],
-          remoteId: 'bili:fav:' + mlMatch[1],
-          normalizedUrl: 'https://www.bilibili.com/medialist/detail/ml' + mlMatch[1],
-          kind: 'playlist'
-        };
-      }
-    }
-
-    // space.bilibili.com/<mid>/lists/<sid>?type=season|series
-    var listsIdx = segments.indexOf('lists');
-    if (listsIdx >= 0 && listsIdx + 1 < segments.length && isDigitsOnly(segments[listsIdx + 1])) {
-      var sid = segments[listsIdx + 1];
-      var mid = pathMid || (isDigitsOnly(query.mid) ? query.mid : '0');
-      if (String(query.type || '').toLowerCase() === 'series') {
-        return {
-          platform: 'bilibili',
-          targetType: 'series',
-          mid: mid,
-          seriesId: sid,
-          remoteId: 'bili:series:' + mid + ':' + sid,
-          normalizedUrl: 'https://space.bilibili.com/' + mid + '/lists/' + sid + '?type=series',
-          kind: 'playlist'
-        };
-      }
-      return {
-        platform: 'bilibili',
-        targetType: 'season',
-        mid: mid,
-        seasonId: sid,
-        remoteId: 'bili:season:' + mid + ':' + sid,
-        normalizedUrl: 'https://space.bilibili.com/' + mid + '/lists/' + sid + '?type=season',
-        kind: 'playlist'
-      };
-    }
-
-    if (u.pathname.indexOf('collectiondetail') >= 0 && isDigitsOnly(query.sid || query.season_id)) {
-      var colSid = query.sid || query.season_id;
-      var colMid = pathMid || (isDigitsOnly(query.mid) ? query.mid : '0');
-      return {
-        platform: 'bilibili',
-        targetType: 'season',
-        mid: colMid,
-        seasonId: colSid,
-        remoteId: 'bili:season:' + colMid + ':' + colSid,
-        normalizedUrl: 'https://space.bilibili.com/' + colMid + '/lists/' + colSid + '?type=season',
-        kind: 'playlist'
-      };
-    }
-
-    if (u.pathname.indexOf('seriesdetail') >= 0 && isDigitsOnly(query.sid || query.series_id)) {
-      var serSid = query.sid || query.series_id;
-      var serMid = pathMid || (isDigitsOnly(query.mid) ? query.mid : '0');
-      return {
-        platform: 'bilibili',
-        targetType: 'series',
-        mid: serMid,
-        seriesId: serSid,
-        remoteId: 'bili:series:' + serMid + ':' + serSid,
-        normalizedUrl: 'https://space.bilibili.com/' + serMid + '/lists/' + serSid + '?type=series',
-        kind: 'playlist'
-      };
-    }
-
-    if (isDigitsOnly(query.season_id)) {
-      var qSeasonMid = pathMid || (isDigitsOnly(query.mid) ? query.mid : '0');
-      return {
-        platform: 'bilibili',
-        targetType: 'season',
-        mid: qSeasonMid,
-        seasonId: query.season_id,
-        remoteId: 'bili:season:' + qSeasonMid + ':' + query.season_id,
-        normalizedUrl: 'https://space.bilibili.com/' + qSeasonMid + '/lists/' + query.season_id + '?type=season',
-        kind: 'playlist'
-      };
-    }
-
-    if (isDigitsOnly(query.series_id)) {
-      var qSeriesMid = pathMid || (isDigitsOnly(query.mid) ? query.mid : '0');
-      return {
-        platform: 'bilibili',
-        targetType: 'series',
-        mid: qSeriesMid,
-        seriesId: query.series_id,
-        remoteId: 'bili:series:' + qSeriesMid + ':' + query.series_id,
-        normalizedUrl: 'https://space.bilibili.com/' + qSeriesMid + '/lists/' + query.series_id + '?type=series',
-        kind: 'playlist'
-      };
-    }
-
-    var pathBv = extractBvidFromText(u.pathname);
-    if (pathBv) {
-      return {
-        platform: 'bilibili',
-        targetType: 'video',
-        bvid: pathBv,
-        aid: null,
-        remoteId: 'bili:video:' + pathBv,
-        normalizedUrl: 'https://www.bilibili.com/video/' + pathBv,
-        kind: 'track'
-      };
-    }
-
-    for (var avIdx = 0; avIdx < segments.length; avIdx++) {
-      var segAv = segments[avIdx].match(/^av([0-9]+)$/i);
-      if (segAv) {
-        return {
-          platform: 'bilibili',
-          targetType: 'video',
-          bvid: null,
-          aid: segAv[1],
-          remoteId: 'bili:video:av' + segAv[1],
-          normalizedUrl: 'https://www.bilibili.com/video/av' + segAv[1],
-          kind: 'track'
-        };
-      }
-    }
   }
 
   return null;
@@ -1735,281 +1325,27 @@ async function searchYouTube(ctx, query, kindFilter, youtubeMode, cookie, cursor
   return await searchYouTubeWeb(ctx, query, kindFilter, cookie, rawToken);
 }
 
-// ---------- Bilibili WBI & API Helpers ----------
-
-function biliHeaders(cookie, referer, origin) {
-  var h = {
-    'User-Agent': WEB_USER_AGENT,
-    'Referer': referer || 'https://www.bilibili.com/',
-    'Origin': origin || 'https://www.bilibili.com'
-  };
-  if (cookie) {
-    h.Cookie = cookie;
-  }
-  return h;
-}
-
-async function resolveBiliCookie(ctx, rawCookie) {
-  var trimmed = rawCookie ? String(rawCookie).trim() : '';
-  if (/\bbuvid3=/i.test(trimmed)) {
-    return trimmed;
-  }
-  var buvid3 = kvGetSafe(ctx, BUVID3_KV_KEY);
-  if (!buvid3) {
-    try {
-      var spiRes = await ctx.http.request({
-        method: 'GET',
-        url: 'https://api.bilibili.com/x/frontend/finger/spi',
-        headers: biliHeaders(null, 'https://www.bilibili.com/', 'https://www.bilibili.com'),
-        followRedirects: true,
-        timeoutMs: 10000
-      });
-      if (spiRes.status >= 200 && spiRes.status < 300 && spiRes.text) {
-        var spiJson = JSON.parse(spiRes.text);
-        var fetched = spiJson && spiJson.data && spiJson.data.b_3 ? String(spiJson.data.b_3).trim() : '';
-        if (fetched) {
-          buvid3 = fetched;
-          kvSetSafe(ctx, BUVID3_KV_KEY, fetched, BUVID3_TTL_SEC);
-        }
-      }
-    } catch (e) {
-      // Fallback below.
-    }
-  }
-  var effectiveB3 = buvid3 || FALLBACK_BUVID3;
-  return trimmed ? (trimmed + '; buvid3=' + effectiveB3) : ('buvid3=' + effectiveB3);
-}
-
-function extractWbiKeyName(urlStr) {
-  var s = String(urlStr == null ? '' : urlStr);
-  var slash = s.lastIndexOf('/');
-  var file = slash >= 0 ? s.slice(slash + 1) : s;
-  var dot = file.indexOf('.');
-  return dot >= 0 ? file.slice(0, dot) : file;
-}
-
-function computeMixinKey(imgUrl, subUrl) {
-  var raw = extractWbiKeyName(imgUrl) + extractWbiKeyName(subUrl);
-  var out = '';
-  for (var i = 0; i < 32; i++) {
-    var idx = WBI_MIXIN_TAB[i];
-    if (idx < raw.length) {
-      out += raw.charAt(idx);
-    }
-  }
-  return out;
-}
-
-async function getWbiMixinKey(ctx, effectiveCookie, forceRefresh) {
-  if (!forceRefresh) {
-    var cached = kvGetSafe(ctx, WBI_KEY_KV_KEY);
-    if (cached) return cached;
-  }
-  var res = await ctx.http.request({
-    method: 'GET',
-    url: 'https://api.bilibili.com/x/web-interface/nav',
-    headers: biliHeaders(effectiveCookie, 'https://www.bilibili.com/', 'https://www.bilibili.com'),
-    followRedirects: true,
-    timeoutMs: 10000
-  });
-  if (res.status === 429) throw extError('RATE_LIMITED', 'Bilibili nav rate limited (HTTP 429).');
-  if (res.status >= 400) throw extError('NETWORK_ERROR', 'Bilibili nav returned HTTP ' + String(res.status) + '.');
-  var navJson;
-  try {
-    navJson = JSON.parse(res.text || '{}');
-  } catch (e) {
-    throw extError('NETWORK_ERROR', 'Invalid JSON from Bilibili nav.');
-  }
-  var wbiImg = navJson && navJson.data && navJson.data.wbi_img;
-  if (!wbiImg || !wbiImg.img_url || !wbiImg.sub_url) {
-    throw extError('NETWORK_ERROR', 'Missing Bilibili WBI keys.');
-  }
-  var mixinKey = computeMixinKey(wbiImg.img_url, wbiImg.sub_url);
-  if (mixinKey.length < 32) {
-    throw extError('NETWORK_ERROR', 'Invalid Bilibili WBI mixin key.');
-  }
-  kvSetSafe(ctx, WBI_KEY_KV_KEY, mixinKey, WBI_KEY_TTL_SEC);
-  return mixinKey;
-}
-
-function signWbiParams(ctx, params, mixinKey, wtsSec) {
-  var all = {};
-  var pKeys = Object.keys(params || {});
-  for (var i = 0; i < pKeys.length; i++) {
-    all[pKeys[i]] = String(params[pKeys[i]] == null ? '' : params[pKeys[i]]);
-  }
-  all.wts = String(wtsSec != null ? Math.floor(Number(wtsSec)) : Math.floor(Date.now() / 1000));
-  var sortedKeys = Object.keys(all).sort();
-  var parts = [];
-  for (var k = 0; k < sortedKeys.length; k++) {
-    var key = sortedKeys[k];
-    var cleanVal = all[key].replace(/[!'()*]/g, '');
-    parts.push(encodeRfc3986(key) + '=' + encodeRfc3986(cleanVal));
-  }
-  var query = parts.join('&');
-  var wRid = ctx.crypto.md5(query + mixinKey);
-  return query + '&w_rid=' + wRid;
-}
-
-function buildPlainQuery(params) {
-  var keys = Object.keys(params || {});
-  var parts = [];
-  for (var i = 0; i < keys.length; i++) {
-    parts.push(encodeRfc3986(keys[i]) + '=' + encodeRfc3986(String(params[keys[i]] == null ? '' : params[keys[i]])));
-  }
-  return parts.join('&');
-}
-
-async function getBiliJson(ctx, url, effectiveCookie, referer, origin) {
-  var res = await ctx.http.request({
-    method: 'GET',
-    url: url,
-    headers: biliHeaders(effectiveCookie, referer, origin),
-    followRedirects: true,
-    timeoutMs: 15000
-  });
-  if (res.status === 429) throw extError('RATE_LIMITED', 'Bilibili returned HTTP 429.');
-  if (res.status === 401 || res.status === 403) throw extError('AUTH_REQUIRED', 'Bilibili returned HTTP ' + String(res.status) + '.');
-  if (res.status >= 400) throw extError('NETWORK_ERROR', 'Bilibili returned HTTP ' + String(res.status) + '.');
-  var json;
-  try {
-    json = JSON.parse(res.text || '{}');
-  } catch (e) {
-    throw extError('NETWORK_ERROR', 'Invalid JSON from Bilibili.');
-  }
-  var code = typeof json.code === 'number' ? json.code : 0;
-  if (code !== 0) {
-    var msg = json.message ? String(json.message) : ('code ' + String(code));
-    if (code === -412 || code === -799 || code === -509) {
-      throw extError('RATE_LIMITED', 'Bilibili rate limited (' + String(code) + '): ' + msg);
-    }
-    if (code === -101 || code === -403) {
-      throw extError('AUTH_REQUIRED', 'Bilibili authentication required (' + String(code) + '): ' + msg);
-    }
-    throw extError('NETWORK_ERROR', 'Bilibili API error (' + String(code) + '): ' + msg);
-  }
-  return json;
-}
-
-async function searchBilibili(ctx, query, order, page, pageSize, rawCookie) {
-  var validOrders = { totalrank: true, click: true, pubdate: true, stow: true };
-  var cleanOrder = validOrders[order] ? order : 'totalrank';
-  var effectiveCookie = await resolveBiliCookie(ctx, rawCookie);
-
-  var params = {
-    search_type: 'video',
-    keyword: query,
-    order: cleanOrder,
-    page: String(page),
-    page_size: String(pageSize)
-  };
-
-  var json = null;
-  var wbiErr = null;
-  try {
-    var mixinKey = await getWbiMixinKey(ctx, effectiveCookie, false);
-    var signedQuery = signWbiParams(ctx, params, mixinKey);
-    json = await getBiliJson(
-      ctx,
-      'https://api.bilibili.com/x/web-interface/wbi/search/type?' + signedQuery,
-      effectiveCookie,
-      'https://search.bilibili.com/',
-      'https://search.bilibili.com'
-    );
-    if (json && json.data && json.data.v_voucher && !Array.isArray(json.data.result)) {
-      throw extError('RATE_LIMITED', 'Bilibili WBI search returned v_voucher challenge.');
-    }
-  } catch (err) {
-    wbiErr = err;
-    kvRemoveSafe(ctx, WBI_KEY_KV_KEY);
-    try {
-      var plainQuery = buildPlainQuery(params);
-      json = await getBiliJson(
-        ctx,
-        'https://api.bilibili.com/x/web-interface/search/type?' + plainQuery,
-        effectiveCookie,
-        'https://search.bilibili.com/',
-        'https://search.bilibili.com'
-      );
-      if (json && json.data && json.data.v_voucher && !Array.isArray(json.data.result)) {
-        throw extError('RATE_LIMITED', 'Bilibili search returned v_voucher challenge.');
-      }
-    } catch (fbErr) {
-      throw (fbErr && fbErr.code === 'RATE_LIMITED') ? fbErr : (wbiErr || fbErr);
-    }
-  }
-
-  var data = (json && json.data) || {};
-  var rawRows = Array.isArray(data.result) ? data.result : [];
-  var items = [];
-  for (var i = 0; i < rawRows.length; i++) {
-    var row = rawRows[i];
-    if (!row || !row.bvid) continue;
-    var bvid = normalizeBvid(String(row.bvid));
-    var title = cleanBiliText(row.title) || bvid;
-    var artist = cleanBiliText(row.author) || 'Bilibili';
-    var art = normalizeHttps(row.pic);
-    var durationSec = parseDurationSec(row.duration);
-    items.push({
-      kind: 'track',
-      remoteTrackId: 'bili:' + bvid,
-      title: title,
-      artist: artist,
-      album: 'Bilibili',
-      durationSec: durationSec,
-      artworkUrl: art,
-      relativePath: sanitizeFileName(title, bvid) + '.m4a'
-    });
-  }
-
-  var numPages = typeof data.numPages === 'number' ? data.numPages : 0;
-  var hasMore = items.length > 0 && (numPages > 0 ? page < numPages : items.length >= pageSize);
-  return {
-    items: items,
-    hasMore: hasMore,
-    nextPage: hasMore ? (page + 1) : null
-  };
-}
-
-// ---------- Combined Search & Pagination ----------
+// ---------- Search & Pagination ----------
 
 function parseSearchCursor(cursor) {
-  var state = { yt: '', ytOffset: 0, biliPage: 0, biliOffset: 0 };
+  var state = { yt: '', ytOffset: 0 };
   if (!cursor || typeof cursor !== 'string' || cursor.indexOf('v1:') !== 0) {
     return state;
   }
-  var body = cursor.slice(3);
-  var segments = body.split(':');
-  for (var i = 0; i < segments.length; i++) {
-    var seg = segments[i];
-    var eq = seg.indexOf('=');
-    if (eq <= 0) continue;
-    var k = seg.slice(0, eq);
-    var v = safeDecodeURIComponent(seg.slice(eq + 1));
-    if (k === 'yt') {
-      var atIdx = v.lastIndexOf('@');
-      if (atIdx >= 0 && isDigitsOnly(v.slice(atIdx + 1))) {
-        state.yt = v.slice(0, atIdx);
-        state.ytOffset = parseInt(v.slice(atIdx + 1), 10) || 0;
-      } else {
-        state.yt = v;
-      }
-    } else if (k === 'bili') {
-      var comma = v.indexOf(',');
-      if (comma >= 0) {
-        state.biliPage = parseInt(v.slice(0, comma), 10) || 0;
-        state.biliOffset = parseInt(v.slice(comma + 1), 10) || 0;
-      } else {
-        state.biliPage = parseInt(v, 10) || 0;
-      }
-    }
+  var val = safeDecodeURIComponent(cursor.slice(3));
+  var atIdx = val.lastIndexOf('@');
+  if (atIdx >= 0 && isDigitsOnly(val.slice(atIdx + 1))) {
+    state.yt = val.slice(0, atIdx);
+    state.ytOffset = parseInt(val.slice(atIdx + 1), 10) || 0;
+  } else {
+    state.yt = val;
   }
   return state;
 }
 
-function formatSearchCursor(ytVal, biliVal) {
-  if (!ytVal && !biliVal) return null;
-  return 'v1:yt=' + encodeURIComponent(ytVal || '') + ':bili=' + encodeURIComponent(biliVal || '');
+function formatSearchCursor(ytVal) {
+  if (!ytVal) return null;
+  return 'v1:' + encodeURIComponent(ytVal);
 }
 
 async function search(ctx, req) {
@@ -2021,147 +1357,60 @@ async function search(ctx, req) {
   var rawKind = String((req && req.kind) || 'all').trim().toLowerCase();
   var kind = (rawKind === 'track' || rawKind === 'playlist' || rawKind === 'album') ? rawKind : 'all';
   var limit = Math.max(1, Math.min(50, Math.floor(Number((req && req.limit) || 20)) || 20));
-  var rawCookie = req && req.cookie ? String(req.cookie) : null;
+  var ytCookie = req && req.cookie ? String(req.cookie).trim() : null;
   var prevCursor = req && req.cursor ? String(req.cursor).trim() : null;
 
-  var source = String(getSetting(ctx, 'source', 'both')).toLowerCase();
-  if (source !== 'youtube' && source !== 'bilibili') source = 'both';
   var youtubeMode = String(getSetting(ctx, 'youtubeMode', 'music')).toLowerCase();
   if (youtubeMode !== 'youtube') youtubeMode = 'music';
-  var biliOrder = String(getSetting(ctx, 'biliSearchOrder', 'totalrank')).toLowerCase();
 
-  if (source === 'bilibili' && (kind === 'playlist' || kind === 'album')) {
+  if (youtubeMode === 'youtube' && kind === 'album') {
     return { items: [], nextCursor: null };
   }
 
   var parsedCur = parseSearchCursor(prevCursor);
   var isFirstPage = !prevCursor;
-
-  var wantYt = (source === 'both' || source === 'youtube') &&
-    !(youtubeMode === 'youtube' && kind === 'album') &&
-    (isFirstPage || Boolean(parsedCur.yt) || parsedCur.ytOffset > 0);
-  var wantBili = (source === 'both' || source === 'bilibili') &&
-    (kind === 'all' || kind === 'track') &&
-    (isFirstPage || parsedCur.biliPage > 0);
-
-  if (!wantYt && !wantBili) {
+  if (!isFirstPage && !parsedCur.yt && parsedCur.ytOffset <= 0) {
     return { items: [], nextCursor: null };
   }
 
-  var ytCookie = resolveScopedCookie(ctx, rawCookie, 'youtube');
-  var biliCookie = resolveScopedCookie(ctx, rawCookie, 'bilibili');
-  var biliPageToFetch = isFirstPage ? 1 : parsedCur.biliPage;
-  var biliPageSize = Math.min(20, Math.max(10, limit));
+  var ytCursorTok = isFirstPage ? null : (parsedCur.yt || null);
+  var ytCacheKey = 'ytsp:' + ctx.crypto.md5([youtubeMode, kind, query, ytCursorTok || ''].join('|'));
 
-  var ytOutcome = null;
-  var biliOutcome = null;
-  var tasks = [];
-
-  if (wantYt) {
-    var ytCursorTok = isFirstPage ? null : (parsedCur.yt || null);
-    var ytCacheKey = 'ytsp:' + ctx.crypto.md5([youtubeMode, kind, query, ytCursorTok || ''].join('|'));
-    tasks.push((async function () {
+  var data = null;
+  if (!isFirstPage && parsedCur.ytOffset > 0) {
+    var cachedRaw = kvGetSafe(ctx, ytCacheKey);
+    if (cachedRaw) {
       try {
-        if (!isFirstPage && parsedCur.ytOffset > 0) {
-          var cachedRaw = kvGetSafe(ctx, ytCacheKey);
-          if (cachedRaw) {
-            ytOutcome = { ok: true, data: JSON.parse(cachedRaw) };
-            return;
-          }
-        }
-        var data = await searchYouTube(ctx, query, kind, youtubeMode, ytCookie, ytCursorTok);
-        kvSetSafe(ctx, ytCacheKey, JSON.stringify(data), 300);
-        ytOutcome = { ok: true, data: data };
-      } catch (err) {
-        ytOutcome = { ok: false, error: err };
+        data = JSON.parse(cachedRaw);
+      } catch (e) {
+        data = null;
       }
-    })());
+    }
+  }
+  if (!data) {
+    data = await searchYouTube(ctx, query, kind, youtubeMode, ytCookie, ytCursorTok);
+    kvSetSafe(ctx, ytCacheKey, JSON.stringify(data), 300);
   }
 
-  if (wantBili) {
-    var biliCacheKey = 'blsp:' + ctx.crypto.md5([biliOrder, query, String(biliPageToFetch), String(biliPageSize)].join('|'));
-    tasks.push((async function () {
-      try {
-        if (!isFirstPage && parsedCur.biliOffset > 0) {
-          var cachedRaw = kvGetSafe(ctx, biliCacheKey);
-          if (cachedRaw) {
-            biliOutcome = { ok: true, data: JSON.parse(cachedRaw) };
-            return;
-          }
-        }
-        var data = await searchBilibili(ctx, query, biliOrder, biliPageToFetch, biliPageSize, biliCookie);
-        kvSetSafe(ctx, biliCacheKey, JSON.stringify(data), 300);
-        biliOutcome = { ok: true, data: data };
-      } catch (err) {
-        biliOutcome = { ok: false, error: err };
-      }
-    })());
-  }
-
-  await Promise.all(tasks);
-
-  if (wantYt && wantBili) {
-    if (!ytOutcome.ok && !biliOutcome.ok) {
-      if (biliOutcome.error && biliOutcome.error.code === 'RATE_LIMITED') throw biliOutcome.error;
-      throw ytOutcome.error || biliOutcome.error;
-    }
-    if (!ytOutcome.ok) {
-      logWarnSafe(ctx, 'YouTube search failed in combined mode: ' + (ytOutcome.error && ytOutcome.error.message ? ytOutcome.error.message : String(ytOutcome.error)));
-    }
-    if (!biliOutcome.ok) {
-      logWarnSafe(ctx, 'Bilibili search failed in combined mode: ' + (biliOutcome.error && biliOutcome.error.message ? biliOutcome.error.message : String(biliOutcome.error)));
-    }
-  } else if (wantYt && !ytOutcome.ok) {
-    throw ytOutcome.error;
-  } else if (wantBili && !biliOutcome.ok) {
-    throw biliOutcome.error;
-  }
-
-  var ytAll = (ytOutcome && ytOutcome.ok && Array.isArray(ytOutcome.data.items)) ? ytOutcome.data.items : [];
+  var ytAll = (data && Array.isArray(data.items)) ? data.items : [];
   var ytSlice = parsedCur.ytOffset > 0 ? ytAll.slice(parsedCur.ytOffset) : ytAll;
-
-  var biliAll = (biliOutcome && biliOutcome.ok && Array.isArray(biliOutcome.data.items)) ? biliOutcome.data.items : [];
-  var biliSlice = parsedCur.biliOffset > 0 ? biliAll.slice(parsedCur.biliOffset) : biliAll;
-
-  var combined = [];
-  var ytIdx = 0;
-  var biliIdx = 0;
-  while (combined.length < limit && (ytIdx < ytSlice.length || biliIdx < biliSlice.length)) {
-    if (ytIdx < ytSlice.length) {
-      combined.push(ytSlice[ytIdx++]);
-    }
-    if (combined.length < limit && biliIdx < biliSlice.length) {
-      combined.push(biliSlice[biliIdx++]);
-    }
-  }
+  var items = ytSlice.slice(0, limit);
 
   var nextYtSeg = '';
-  if (ytOutcome && ytOutcome.ok) {
-    var totalYtConsumed = (isFirstPage ? 0 : parsedCur.ytOffset) + ytIdx;
-    if (totalYtConsumed < ytAll.length) {
-      nextYtSeg = (isFirstPage ? '' : (parsedCur.yt || '')) + '@' + String(totalYtConsumed);
-    } else if (ytOutcome.data.nextToken) {
-      nextYtSeg = ytOutcome.data.nextToken;
-    }
+  var totalConsumed = (isFirstPage ? 0 : parsedCur.ytOffset) + items.length;
+  if (totalConsumed < ytAll.length) {
+    nextYtSeg = (isFirstPage ? '' : (parsedCur.yt || '')) + '@' + String(totalConsumed);
+  } else if (data.nextToken) {
+    nextYtSeg = data.nextToken;
   }
 
-  var nextBiliSeg = '';
-  if (biliOutcome && biliOutcome.ok) {
-    var totalBiliConsumed = (isFirstPage ? 0 : parsedCur.biliOffset) + biliIdx;
-    if (totalBiliConsumed < biliAll.length) {
-      nextBiliSeg = String(biliPageToFetch) + ',' + String(totalBiliConsumed);
-    } else if (biliOutcome.data.hasMore && biliOutcome.data.nextPage) {
-      nextBiliSeg = String(biliOutcome.data.nextPage);
-    }
-  }
-
-  var nextCursor = formatSearchCursor(nextYtSeg, nextBiliSeg);
+  var nextCursor = formatSearchCursor(nextYtSeg);
   if (nextCursor && prevCursor && nextCursor === prevCursor) {
     nextCursor = null;
   }
 
   return {
-    items: combined,
+    items: items,
     nextCursor: nextCursor
   };
 }
@@ -2214,7 +1463,6 @@ function extractYtPlaylistMeta(root) {
     title = String(root.metadata.playlistMetadataRenderer.title).trim();
   }
 
-  // Modern WEB_REMIX places musicResponsiveHeaderRenderer inside twoColumnBrowseResultsRenderer.
   function findResponsiveHeader(node) {
     if (!node || typeof node !== 'object') return null;
     if (Array.isArray(node)) {
@@ -2676,295 +1924,20 @@ async function fetchYtPlaylist(ctx, rawListId, videoId, cookie, cursor) {
   throw lastErr || extError('EMPTY_COLLECTION', 'YouTube playlist contains no playable tracks.');
 }
 
-async function fetchBiliVideo(ctx, bvid, aid, rawCookie) {
-  var effectiveCookie = await resolveBiliCookie(ctx, rawCookie);
-  var query = bvid ? ('bvid=' + encodeURIComponent(bvid)) : ('aid=' + encodeURIComponent(aid));
-  var json = await getBiliJson(
-    ctx,
-    'https://api.bilibili.com/x/web-interface/view?' + query,
-    effectiveCookie,
-    'https://www.bilibili.com/',
-    'https://www.bilibili.com'
-  );
-  var data = json && json.data;
-  if (!data) {
-    throw extError('EMPTY_COLLECTION', 'Bilibili video data missing.');
-  }
-  var resolvedBvid = data.bvid ? normalizeBvid(String(data.bvid)) : (bvid || ('av' + String(aid)));
-  var videoTitle = String(data.title || resolvedBvid).trim() || resolvedBvid;
-  var artist = String((data.owner && data.owner.name) || 'Bilibili').trim() || 'Bilibili';
-  var art = normalizeHttps(data.pic);
-  var totalDur = parseDurationSec(data.duration);
-  var pages = Array.isArray(data.pages) ? data.pages : [];
-  var tracks = [];
-
-  if (pages.length > 1) {
-    for (var i = 0; i < pages.length; i++) {
-      var p = pages[i];
-      if (!p || !p.cid) continue;
-      var pageNum = typeof p.page === 'number' ? p.page : (i + 1);
-      var partName = String(p.part || '').trim();
-      var trackTitle = partName ? ('P' + String(pageNum) + ' ' + partName) : (videoTitle + ' - P' + String(pageNum));
-      var trackId = 'bili:' + resolvedBvid + '#' + String(p.cid);
-      tracks.push({
-        remoteTrackId: trackId,
-        relativePath: pad2(pageNum) + ' - ' + sanitizeFileName(trackTitle, trackId) + '.m4a',
-        title: trackTitle,
-        artist: artist,
-        album: videoTitle,
-        trackNumber: pageNum,
-        durationSec: parseDurationSec(p.duration) || totalDur,
-        artworkUrl: art
-      });
-    }
-  } else {
-    var singleCid = (pages[0] && pages[0].cid) || data.cid;
-    var singleId = singleCid ? ('bili:' + resolvedBvid + '#' + String(singleCid)) : ('bili:' + resolvedBvid);
-    tracks.push({
-      remoteTrackId: singleId,
-      relativePath: '01 - ' + sanitizeFileName(videoTitle, singleId) + '.m4a',
-      title: videoTitle,
-      artist: artist,
-      album: videoTitle,
-      trackNumber: 1,
-      durationSec: totalDur,
-      artworkUrl: art
-    });
-  }
-
-  if (tracks.length === 0) {
-    throw extError('EMPTY_COLLECTION', 'Bilibili video contains no playable parts.');
-  }
-
-  return {
-    remoteId: 'bili:video:' + resolvedBvid,
-    title: videoTitle,
-    tracks: tracks,
-    nextCursor: null
-  };
-}
-
-function encodeBiliCollectionCursor(obj) {
-  return 'bili:' + JSON.stringify(obj);
-}
-
-function decodeBiliCollectionCursor(cursor) {
-  if (!cursor || cursor.indexOf('bili:') !== 0) return null;
-  try {
-    return JSON.parse(cursor.slice(5));
-  } catch (e) {
-    return null;
-  }
-}
-
-async function fetchBiliFavlist(ctx, mediaId, rawCookie, cursor) {
-  var effectiveCookie = await resolveBiliCookie(ctx, rawCookie);
-  var cur = decodeBiliCollectionCursor(cursor);
-  var page = cur && typeof cur.p === 'number' ? cur.p : 1;
-  var offset = cur && typeof cur.o === 'number' ? cur.o : 1;
-  var title = (cur && cur.t) || ('Bilibili Favlist (' + mediaId + ')');
-  var tracks = [];
-  var hasMore = false;
-
-  // Loop only if a page consists purely of invalidated entries.
-  while (page <= 50) {
-    var url = 'https://api.bilibili.com/x/v3/fav/resource/list?media_id=' + encodeURIComponent(mediaId) + '&pn=' + String(page) + '&ps=20&platform=web';
-    var json = await getBiliJson(ctx, url, effectiveCookie, 'https://www.bilibili.com/', 'https://www.bilibili.com');
-    var data = (json && json.data) || {};
-    if (page === 1 && data.info && data.info.title) {
-      title = String(data.info.title).trim() || title;
-    }
-    var medias = Array.isArray(data.medias) ? data.medias : [];
-    for (var i = 0; i < medias.length; i++) {
-      var item = medias[i];
-      if (!item || item.attr === 9 || !item.bvid) continue;
-      var itemTitle = String(item.title || item.bvid).trim();
-      if (itemTitle === '已失效视频') continue;
-      var bvid = normalizeBvid(String(item.bvid));
-      var cid = item.ugc && item.ugc.first_cid ? String(item.ugc.first_cid) : null;
-      var remoteTrackId = cid ? ('bili:' + bvid + '#' + cid) : ('bili:' + bvid);
-      var artist = String((item.upper && item.upper.name) || 'Bilibili').trim() || 'Bilibili';
-      var num = offset + tracks.length;
-      tracks.push({
-        remoteTrackId: remoteTrackId,
-        relativePath: pad2(num) + ' - ' + sanitizeFileName(itemTitle, remoteTrackId) + '.m4a',
-        title: itemTitle,
-        artist: artist,
-        album: title,
-        trackNumber: num,
-        durationSec: parseDurationSec(item.duration),
-        artworkUrl: normalizeHttps(item.cover)
-      });
-    }
-    hasMore = Boolean(data.has_more) && medias.length > 0;
-    page += 1;
-    if (tracks.length > 0 || !hasMore) break;
-  }
-
-  if (tracks.length === 0 && !cursor) {
-    throw extError('EMPTY_COLLECTION', 'Bilibili favlist contains no playable videos.');
-  }
-
-  return {
-    remoteId: 'bili:fav:' + mediaId,
-    title: title,
-    tracks: tracks,
-    nextCursor: hasMore ? encodeBiliCollectionCursor({ p: page, o: offset + tracks.length, t: title }) : null
-  };
-}
-
-function mapBiliArchiveTracks(archives, title, offset) {
-  var tracks = [];
-  for (var i = 0; i < archives.length; i++) {
-    var item = archives[i];
-    if (!item || !item.bvid) continue;
-    var bvid = normalizeBvid(String(item.bvid));
-    var itemTitle = String(item.title || bvid).trim() || bvid;
-    var artist = String(item.author || (item.owner && item.owner.name) || 'Bilibili').trim() || 'Bilibili';
-    var num = offset + tracks.length;
-    var trackId = 'bili:' + bvid;
-    tracks.push({
-      remoteTrackId: trackId,
-      relativePath: pad2(num) + ' - ' + sanitizeFileName(itemTitle, trackId) + '.m4a',
-      title: itemTitle,
-      artist: artist,
-      album: title,
-      trackNumber: num,
-      durationSec: parseDurationSec(item.duration),
-      artworkUrl: normalizeHttps(item.pic)
-    });
-  }
-  return tracks;
-}
-
-async function fetchBiliSeason(ctx, mid, seasonId, rawCookie, cursor) {
-  var effectiveCookie = await resolveBiliCookie(ctx, rawCookie);
-  var cur = decodeBiliCollectionCursor(cursor);
-  var page = cur && typeof cur.p === 'number' ? cur.p : 1;
-  var offset = cur && typeof cur.o === 'number' ? cur.o : 1;
-  var title = (cur && cur.t) || ('Bilibili Collection (' + seasonId + ')');
-
-  var url = 'https://api.bilibili.com/x/polymer/web-space/seasons_archives_list?mid=' +
-    encodeURIComponent(mid || '0') + '&season_id=' + encodeURIComponent(seasonId) +
-    '&sort_reverse=false&page_num=' + String(page) + '&page_size=30';
-  var json = await getBiliJson(ctx, url, effectiveCookie, 'https://space.bilibili.com/', 'https://space.bilibili.com');
-  var data = (json && json.data) || {};
-  if (page === 1 && data.meta && data.meta.name) {
-    title = String(data.meta.name).trim() || title;
-  }
-  var archives = Array.isArray(data.archives) ? data.archives : [];
-  var tracks = mapBiliArchiveTracks(archives, title, offset);
-  var total = data.page && typeof data.page.total === 'number' ? data.page.total : 0;
-  var hasMore = archives.length >= 30 && (total === 0 || ((page - 1) * 30 + archives.length) < total);
-
-  if (tracks.length === 0 && !cursor) {
-    throw extError('EMPTY_COLLECTION', 'Bilibili collection contains no playable videos.');
-  }
-
-  return {
-    remoteId: 'bili:season:' + (mid || '0') + ':' + seasonId,
-    title: title,
-    tracks: tracks,
-    nextCursor: hasMore ? encodeBiliCollectionCursor({ p: page + 1, o: offset + tracks.length, t: title }) : null
-  };
-}
-
-async function fetchBiliSeries(ctx, mid, seriesId, rawCookie, cursor) {
-  var effectiveCookie = await resolveBiliCookie(ctx, rawCookie);
-  var cur = decodeBiliCollectionCursor(cursor);
-  var page = cur && typeof cur.p === 'number' ? cur.p : 1;
-  var offset = cur && typeof cur.o === 'number' ? cur.o : 1;
-  var title = (cur && cur.t) || ('Bilibili Series (' + seriesId + ')');
-
-  if (page === 1) {
-    try {
-      var metaJson = await getBiliJson(
-        ctx,
-        'https://api.bilibili.com/x/series/series?series_id=' + encodeURIComponent(seriesId),
-        effectiveCookie,
-        'https://space.bilibili.com/',
-        'https://space.bilibili.com'
-      );
-      if (metaJson && metaJson.data && metaJson.data.meta && metaJson.data.meta.name) {
-        title = String(metaJson.data.meta.name).trim() || title;
-      }
-    } catch (e) {
-      // Non-fatal metadata fetch.
-    }
-  }
-
-  var url = 'https://api.bilibili.com/x/series/archives?mid=' +
-    encodeURIComponent(mid || '0') + '&series_id=' + encodeURIComponent(seriesId) +
-    '&only_normal=true&sort=desc&pn=' + String(page) + '&ps=30';
-  var json = await getBiliJson(ctx, url, effectiveCookie, 'https://space.bilibili.com/', 'https://space.bilibili.com');
-  var data = (json && json.data) || {};
-  var archives = Array.isArray(data.archives) ? data.archives : [];
-  var tracks = mapBiliArchiveTracks(archives, title, offset);
-  var total = data.page && typeof data.page.total === 'number' ? data.page.total : 0;
-  var hasMore = archives.length >= 30 && (total === 0 || ((page - 1) * 30 + archives.length) < total);
-
-  if (tracks.length === 0 && !cursor) {
-    throw extError('EMPTY_COLLECTION', 'Bilibili series contains no playable videos.');
-  }
-
-  return {
-    remoteId: 'bili:series:' + (mid || '0') + ':' + seriesId,
-    title: title,
-    tracks: tracks,
-    nextCursor: hasMore ? encodeBiliCollectionCursor({ p: page + 1, o: offset + tracks.length, t: title }) : null
-  };
-}
-
 async function fetchCollection(ctx, req) {
   var rawUrl = String((req && req.url) || '').trim();
   var target = parseTarget(rawUrl);
   if (!target) {
-    throw extError('INVALID_URL', 'Unsupported YouTube or Bilibili link.');
+    throw extError('INVALID_URL', 'Unsupported YouTube link.');
   }
 
-  var rawCookie = req && req.cookie ? String(req.cookie) : null;
+  var ytCookie = req && req.cookie ? String(req.cookie).trim() : null;
   var cursor = req && req.cursor ? String(req.cursor).trim() : null;
 
-  if (target.platform === 'bilibili' && target.targetType === 'short') {
-    var biliCookie = resolveScopedCookie(ctx, rawCookie, 'bilibili');
-    var redirRes = await ctx.http.request({
-      method: 'GET',
-      url: target.url,
-      headers: biliHeaders(biliCookie, 'https://www.bilibili.com/', 'https://www.bilibili.com'),
-      followRedirects: true,
-      timeoutMs: 15000
-    });
-    var resolvedUrl = redirRes.finalUrl || (redirRes.headers && redirRes.headers.location) || '';
-    var nextTarget = parseTarget(resolvedUrl);
-    if ((!nextTarget || nextTarget.targetType === 'short') && redirRes.text) {
-      var metaM = redirRes.text.match(/https?:\/\/(?:www\.|m\.|space\.)?bilibili\.com\/[^\s"'<>]+/i);
-      if (metaM) nextTarget = parseTarget(metaM[0]);
-    }
-    if (!nextTarget || nextTarget.targetType === 'short') {
-      throw extError('INVALID_URL', 'Could not resolve Bilibili short link.');
-    }
-    target = nextTarget;
+  if (target.targetType === 'video') {
+    return await fetchYtSingleVideo(ctx, target.videoId, ytCookie);
   }
-
-  if (target.platform === 'youtube') {
-    var ytCookie = resolveScopedCookie(ctx, rawCookie, 'youtube');
-    if (target.targetType === 'video') {
-      return await fetchYtSingleVideo(ctx, target.videoId, ytCookie);
-    }
-    return await fetchYtPlaylist(ctx, target.listId, target.videoId, ytCookie, cursor);
-  }
-
-  var scopedBiliCookie = resolveScopedCookie(ctx, rawCookie, 'bilibili');
-  if (target.targetType === 'fav') {
-    return await fetchBiliFavlist(ctx, target.mediaId, scopedBiliCookie, cursor);
-  }
-  if (target.targetType === 'season') {
-    return await fetchBiliSeason(ctx, target.mid, target.seasonId, scopedBiliCookie, cursor);
-  }
-  if (target.targetType === 'series') {
-    return await fetchBiliSeries(ctx, target.mid, target.seriesId, scopedBiliCookie, cursor);
-  }
-  return await fetchBiliVideo(ctx, target.bvid, target.aid, scopedBiliCookie);
+  return await fetchYtPlaylist(ctx, target.listId, target.videoId, ytCookie, cursor);
 }
 
 // ---------- Stream Resolution ----------
@@ -2975,36 +1948,10 @@ function parseStreamTrackId(rawId) {
 
   if (s.indexOf('yt:') === 0) {
     var yv = s.slice(3);
-    return isYouTubeVideoId(yv) ? { platform: 'youtube', videoId: yv } : null;
-  }
-  if (s.indexOf('bili:') === 0) {
-    var rest = s.slice(5);
-    var parts = rest.split('#');
-    var base = parts[0];
-    var cid = parts[1] && isDigitsOnly(parts[1]) ? parts[1] : null;
-    if (/^BV[0-9A-Za-z]{10,}$/i.test(base)) {
-      return { platform: 'bilibili', bvid: normalizeBvid(base), aid: null, cid: cid };
-    }
-    var avM = base.match(/^av([0-9]+)$/i);
-    if (avM) {
-      return { platform: 'bilibili', bvid: null, aid: avM[1], cid: cid };
-    }
-    return null;
-  }
-
-  // Bare IDs supported in resolveStream.
-  var hashParts = s.split('#');
-  var bareBase = hashParts[0];
-  var bareCid = hashParts[1] && isDigitsOnly(hashParts[1]) ? hashParts[1] : null;
-  if (/^BV[0-9A-Za-z]{10,}$/i.test(bareBase)) {
-    return { platform: 'bilibili', bvid: normalizeBvid(bareBase), aid: null, cid: bareCid };
-  }
-  var bareAv = bareBase.match(/^av([0-9]+)$/i);
-  if (bareAv) {
-    return { platform: 'bilibili', bvid: null, aid: bareAv[1], cid: bareCid };
+    return isYouTubeVideoId(yv) ? { videoId: yv } : null;
   }
   if (isYouTubeVideoId(s)) {
-    return { platform: 'youtube', videoId: s };
+    return { videoId: s };
   }
   return null;
 }
@@ -3251,197 +2198,14 @@ async function resolveYtStream(ctx, videoId, ytCookie, forceRefresh) {
   throw lastErr || extError('NO_PLAYABLE_STREAM', 'No playable YouTube audio stream found.');
 }
 
-function extractBiliStreamCandidate(playJson) {
-  var data = playJson && playJson.data;
-  if (!data) return null;
-
-  if (data.dash) {
-    var streams = Array.isArray(data.dash.audio) ? data.dash.audio.slice() : [];
-    if (data.dash.flac && data.dash.flac.audio) {
-      streams.push(data.dash.flac.audio);
-    }
-    var preferredIds = [30280, 30232, 30216, 30251];
-    streams.sort(function (a, b) {
-      var idA = typeof (a && a.id) === 'number' ? a.id : 0;
-      var idB = typeof (b && b.id) === 'number' ? b.id : 0;
-      var rankA = preferredIds.indexOf(idA);
-      var rankB = preferredIds.indexOf(idB);
-      if (rankA < 0) rankA = preferredIds.length;
-      if (rankB < 0) rankB = preferredIds.length;
-      if (rankA !== rankB) return rankA - rankB;
-      return (Number(b && b.bandwidth) || 0) - (Number(a && a.bandwidth) || 0);
-    });
-
-    for (var i = 0; i < streams.length; i++) {
-      var s = streams[i];
-      if (!s) continue;
-      var primary = normalizeHttps(s.baseUrl || s.base_url);
-      var rawBackups = (Array.isArray(s.backupUrl) ? s.backupUrl : (Array.isArray(s.backup_url) ? s.backup_url : []));
-      var backups = [];
-      for (var b = 0; b < rawBackups.length; b++) {
-        var normB = normalizeHttps(rawBackups[b]);
-        if (normB) {
-          if (!primary) primary = normB;
-          else if (normB !== primary && backups.indexOf(normB) < 0) backups.push(normB);
-        }
-      }
-      if (!primary) continue;
-      var sid = typeof s.id === 'number' ? s.id : 0;
-      var mime = String(s.mimeType || s.mime_type || '').toLowerCase();
-      var isFlac = sid === 30251 || mime.indexOf('flac') >= 0;
-      return {
-        url: primary,
-        fallbackUrls: backups,
-        fileExtension: isFlac ? 'flac' : 'm4a',
-        mimeType: isFlac ? 'audio/flac' : 'audio/mp4'
-      };
-    }
-  }
-
-  if (Array.isArray(data.durl) && data.durl.length > 0) {
-    var first = data.durl[0];
-    if (first) {
-      var dPrimary = normalizeHttps(first.url);
-      var dRawBackups = Array.isArray(first.backup_url) ? first.backup_url : [];
-      var dBackups = [];
-      for (var j = 0; j < dRawBackups.length; j++) {
-        var normD = normalizeHttps(dRawBackups[j]);
-        if (normD) {
-          if (!dPrimary) dPrimary = normD;
-          else if (normD !== dPrimary && dBackups.indexOf(normD) < 0) dBackups.push(normD);
-        }
-      }
-      if (dPrimary) {
-        return {
-          url: dPrimary,
-          fallbackUrls: dBackups,
-          fileExtension: 'mp4',
-          mimeType: 'video/mp4'
-        };
-      }
-    }
-  }
-
-  return null;
-}
-
-function extractBiliExpireMs(urlStr) {
-  var parsed = parseUrl(urlStr);
-  if (parsed && parsed.query && parsed.query.deadline && isDigitsOnly(parsed.query.deadline)) {
-    var dl = parseInt(parsed.query.deadline, 10);
-    if (isFinite(dl) && dl > 0) {
-      return (dl - 60) * 1000;
-    }
-  }
-  return Date.now() + 5400 * 1000;
-}
-
-async function resolveBiliStream(ctx, target, rawCookie) {
-  var effectiveCookie = await resolveBiliCookie(ctx, rawCookie);
-  var bvid = target.bvid;
-  var aid = target.aid;
-  var cid = target.cid;
-
-  if (!cid || !bvid) {
-    var viewQuery = bvid ? ('bvid=' + encodeURIComponent(bvid)) : ('aid=' + encodeURIComponent(aid));
-    var viewJson = await getBiliJson(
-      ctx,
-      'https://api.bilibili.com/x/web-interface/view?' + viewQuery,
-      effectiveCookie,
-      'https://www.bilibili.com/',
-      'https://www.bilibili.com'
-    );
-    var viewData = viewJson && viewJson.data;
-    if (!viewData) {
-      throw extError('NO_PLAYABLE_STREAM', 'Could not resolve Bilibili video info.');
-    }
-    if (!bvid && viewData.bvid) bvid = normalizeBvid(String(viewData.bvid));
-    if (!cid) {
-      var resolvedC = viewData.cid || (Array.isArray(viewData.pages) && viewData.pages[0] && viewData.pages[0].cid);
-      if (resolvedC) cid = String(resolvedC);
-    }
-  }
-
-  if (!bvid || !cid) {
-    throw extError('NO_PLAYABLE_STREAM', 'Missing Bilibili bvid or cid.');
-  }
-
-  var params = {
-    bvid: bvid,
-    cid: String(cid),
-    qn: '80',
-    fnval: '16',
-    fnver: '0',
-    fourk: '1'
-  };
-
-  var playJson = null;
-  var candidate = null;
-  var wbiErr = null;
-  try {
-    var mixinKey = await getWbiMixinKey(ctx, effectiveCookie, false);
-    var signedQuery = signWbiParams(ctx, params, mixinKey);
-    playJson = await getBiliJson(
-      ctx,
-      'https://api.bilibili.com/x/player/wbi/playurl?' + signedQuery,
-      effectiveCookie,
-      'https://www.bilibili.com/video/' + bvid,
-      'https://www.bilibili.com'
-    );
-    candidate = extractBiliStreamCandidate(playJson);
-  } catch (err) {
-    wbiErr = err;
-    kvRemoveSafe(ctx, WBI_KEY_KV_KEY);
-  }
-
-  if (!candidate) {
-    try {
-      var plainQuery = buildPlainQuery(params);
-      playJson = await getBiliJson(
-        ctx,
-        'https://api.bilibili.com/x/player/playurl?' + plainQuery,
-        effectiveCookie,
-        'https://www.bilibili.com/video/' + bvid,
-        'https://www.bilibili.com'
-      );
-      candidate = extractBiliStreamCandidate(playJson);
-    } catch (fbErr) {
-      throw wbiErr || fbErr;
-    }
-  }
-
-  if (!candidate) {
-    throw extError('NO_PLAYABLE_STREAM', 'No playable audio stream in Bilibili playurl response.');
-  }
-
-  return {
-    url: candidate.url,
-    headers: {
-      'User-Agent': WEB_USER_AGENT,
-      'Referer': 'https://www.bilibili.com/video/' + bvid,
-      'Origin': 'https://www.bilibili.com',
-      'Cookie': effectiveCookie
-    },
-    fileExtension: candidate.fileExtension,
-    mimeType: candidate.mimeType,
-    expiresAtMs: extractBiliExpireMs(candidate.url),
-    fallbackUrls: candidate.fallbackUrls
-  };
-}
-
 async function resolveStream(ctx, req) {
   var rawTrackId = (req && (req.remoteTrackId || req.relativePath)) || '';
   var parsed = parseStreamTrackId(rawTrackId);
   if (!parsed) {
-    throw extError('NO_PLAYABLE_STREAM', 'Unrecognized track ID: ' + String(rawTrackId));
+    throw extError('NO_PLAYABLE_STREAM', 'Unrecognized YouTube track ID: ' + String(rawTrackId));
   }
-  var rawCookie = req && req.cookie ? String(req.cookie) : null;
-  if (parsed.platform === 'youtube') {
-    var ytCookie = resolveScopedCookie(ctx, rawCookie, 'youtube');
-    return await resolveYtStream(ctx, parsed.videoId, ytCookie, Boolean(req && req.forceRefresh));
-  }
-  var biliCookie = resolveScopedCookie(ctx, rawCookie, 'bilibili');
-  return await resolveBiliStream(ctx, parsed, biliCookie);
+  var ytCookie = req && req.cookie ? String(req.cookie).trim() : null;
+  return await resolveYtStream(ctx, parsed.videoId, ytCookie, Boolean(req && req.forceRefresh));
 }
 
 module.exports = {

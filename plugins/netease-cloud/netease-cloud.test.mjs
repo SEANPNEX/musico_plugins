@@ -79,9 +79,13 @@ test('manifest, exports, host allowlist, and strict portability check', () => {
   assert.equal(m.apiVersion, 1);
   assert.equal(m.id, 'com.seanpnex.musico.netease');
   assert.equal(m.name, 'NetEase Cloud Music');
-  assert.equal(m.version, '1.1.0');
+  assert.equal(m.version, '1.1.1');
   assert.equal(m.author, 'SEANPNEX');
   assert.equal(m.badgeLabel, 'NetEase');
+  assert.equal(
+    m.updateUrl,
+    'https://github.com/SEANPNEX/musico_plugins/releases/download/netease-cloud-v1.1.1/netease-cloud.musicoext'
+  );
   assert.deepEqual(plain(m.capabilities), ['playlist', 'stream', 'search', 'cookie', 'qr_login', 'proxy']);
   assert.equal(m.capabilities.includes('lyrics'), false);
   assert.deepEqual(plain(m.searchKinds), ['track', 'playlist', 'album']);

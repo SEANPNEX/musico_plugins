@@ -120,6 +120,18 @@ export function validateManifest(manifest) {
     assert.ok(typeof manifest.badgeLabel === 'string', 'manifest.badgeLabel must be a string');
   }
 
+  if (manifest.updateUrl !== undefined && manifest.updateUrl !== null) {
+    assert.ok(typeof manifest.updateUrl === 'string' && manifest.updateUrl.trim().length > 0, 'manifest.updateUrl must be a non-empty string');
+    let parsedUpdateUrl;
+    try {
+      parsedUpdateUrl = new URL(manifest.updateUrl.trim());
+    } catch {
+      assert.fail(`manifest.updateUrl must be a valid HTTPS URL: ${manifest.updateUrl}`);
+    }
+    assert.equal(parsedUpdateUrl.protocol, 'https:', 'manifest.updateUrl must use https://');
+    assert.ok(parsedUpdateUrl.hostname && parsedUpdateUrl.hostname.length > 0, 'manifest.updateUrl must include a valid host');
+  }
+
   if (manifest.entry !== undefined && manifest.entry !== null) {
     assert.ok(typeof manifest.entry === 'string' && manifest.entry.trim().length > 0, 'manifest.entry must be a non-empty string');
     const normalizedEntry = manifest.entry.trim().replace(/\\/g, '/');
@@ -613,6 +625,7 @@ export function runConformance(targetPath, opts = {}) {
     id: ext.manifest.id,
     name: ext.manifest.name,
     version: ext.manifest.version,
+    updateUrl: ext.manifest.updateUrl || null,
     capabilities: ext.manifest.capabilities,
     hosts: ext.manifest.permissions.hosts,
     strictPortabilityPassed: strict,
@@ -661,7 +674,8 @@ export function createHostBridge(
           method: currentMethod,
           url: currentUrl,
           headers: { ...headers },
-          body: hop === 0 || currentMethod === initialMethod ? req?.body : undefined
+          body: hop === 0 || currentMethod === initialMethod ? req?.body : undefined,
+          timeoutMs
         });
       } else {
         const controller = new AbortController();
@@ -993,6 +1007,35 @@ export async function runSelfTest() {
     searchKinds: ['podcast'],
     permissions: { hosts: ['example.com'] }
   }), /Unsupported searchKind/);
+
+  // Validate optional manifest.updateUrl (HTTPS-only when present)
+  validateManifest({
+    apiVersion: 1,
+    id: 'com.example.valid.update',
+    name: 'Valid Update URL',
+    version: '1.0.0',
+    updateUrl: 'https://github.com/SEANPNEX/musico_plugins/releases/download/v1.0.0/valid.musicoext',
+    capabilities: ['search'],
+    permissions: { hosts: ['example.com'] }
+  });
+  for (const badUpdateUrl of [
+    '',
+    '   ',
+    123,
+    'not-a-url',
+    'http://github.com/SEANPNEX/musico_plugins/releases/download/v1.0.0/a.musicoext',
+    'file:///tmp/a.musicoext'
+  ]) {
+    assert.throws(() => validateManifest({
+      apiVersion: 1,
+      id: 'com.example.invalid.update',
+      name: 'Invalid Update URL',
+      version: '1.0.0',
+      updateUrl: badUpdateUrl,
+      capabilities: ['search'],
+      permissions: { hosts: ['example.com'] }
+    }), /updateUrl/, `Expected invalid updateUrl to fail: ${String(badUpdateUrl)}`);
+  }
 
   // 3. Verify strict VM omits every forbidden global at runtime
   for (const sym of FORBIDDEN_PORTABILITY_GLOBALS) {
