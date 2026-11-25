@@ -235,23 +235,26 @@ export function buildRelease({
   }
 
   notesLines.push('### Included Plugins', '');
-  notesLines.push('| Plugin | ID | Version | Asset | Capabilities | SHA-256 |');
+  notesLines.push('| Plugin | ID | Version | Download / Auto-Update | Capabilities | SHA-256 |');
   notesLines.push('|---|---|---|---|---|---|');
   for (const item of pluginEntries) {
     const caps = item.capabilities.join(', ');
+    const downloadUrl = `https://github.com/${repository}/releases/latest/download/${item.asset}`;
     notesLines.push(
-      `| ${item.name} | \`${item.id}\` | \`${item.version}\` | \`${item.asset}\` | \`${caps}\` | \`${item.sha256.slice(0, 12)}\` |`
+      `| ${item.name} | \`${item.id}\` | \`${item.version}\` | [\`${item.asset}\`](${downloadUrl}) | \`${caps}\` | \`${item.sha256.slice(0, 12)}\` |`
     );
   }
+  const allBundleUrl = `https://github.com/${repository}/releases/latest/download/${ALL_BUNDLE_FILENAME}`;
   notesLines.push(
     '',
     '### All-in-One Bundle',
     '',
-    `- \`${ALL_BUNDLE_FILENAME}\` (\`${allBundleSizeBytes}\` bytes, SHA-256 \`${allBundleSha256.slice(0, 12)}\`) contains all ${pluginEntries.length} plugins for single-file import.`,
+    `- **Unified Import URL:** \`${allBundleUrl}\``,
+    `- [\`${ALL_BUNDLE_FILENAME}\`](${allBundleUrl}) (\`${allBundleSizeBytes}\` bytes, SHA-256 \`${allBundleSha256.slice(0, 12)}\`) contains all ${pluginEntries.length} plugins for single-file or HTTPS URL import.`,
     '',
     '### Auto-Update & Verification',
     '',
-    '- Every plugin manifest `updateUrl` points to `/releases/latest/download/<slug>.musicoext`.',
+    `- Every plugin manifest \`updateUrl\` points to \`https://github.com/${repository}/releases/latest/download/<slug>.musicoext\`.`,
     '- Release metadata and package SHA-256 checksums are included in `plugins.json` and `SHA256SUMS.txt`.',
     ''
   );

@@ -2,6 +2,13 @@
 
 Single-file Musico API v1 extension providing **YouTube / YouTube Music** cloud search, playlist/album/mix importing, and cross-platform audio stream resolution.
 
+## Install & Auto-Update
+
+- **Direct Extension URL (`.musicoext` / auto-update):** `https://github.com/SEANPNEX/musico_plugins/releases/latest/download/youtube-search.musicoext`
+- **All-in-One Bundle (`.zip`):** `https://github.com/SEANPNEX/musico_plugins/releases/latest/download/musico-plugins-all.zip`
+
+Import either URL in Musico via **Extensions → Import from HTTPS URL** (or download and import the file). The extension manifest includes `updateUrl` pointing to the `.musicoext` link above for automatic updates.
+
 ## Features
 
 - **Cloud Search (`search`)**:

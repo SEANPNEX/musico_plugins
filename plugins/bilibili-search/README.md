@@ -2,6 +2,13 @@
 
 Single-file Musico API v1 extension providing **Bilibili** cloud search (songs, multi-part 分P videos, and 合集 `ugc_season` collections), collection importing, and audio stream resolution.
 
+## Install & Auto-Update
+
+- **Direct Extension URL (`.musicoext` / auto-update):** `https://github.com/SEANPNEX/musico_plugins/releases/latest/download/bilibili-search.musicoext`
+- **All-in-One Bundle (`.zip`):** `https://github.com/SEANPNEX/musico_plugins/releases/latest/download/musico-plugins-all.zip`
+
+Import either URL in Musico via **Extensions → Import from HTTPS URL** (or download and import the file). The extension manifest includes `updateUrl` pointing to the `.musicoext` link above for automatic updates.
+
 ## Features
 
 - **Cloud Search (`search`)**:

@@ -1,7 +1,7 @@
 {
   "name": "musico_plugins",
   "version": "1.0.0",
-  "description": "Private JavaScript extensions for Musico",
+  "description": "JavaScript extensions for Musico (YouTube, Bilibili, NetEase Cloud Music, Apple Music)",
   "private": true,
   "license": "MIT",
   "type": "module",

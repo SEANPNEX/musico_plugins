@@ -4,6 +4,13 @@ Single-file Musico API v1 extension for **NetEase Cloud Music** (`music.163.com`
 
 > **Lyrics note:** This extension intentionally omits the `"lyrics"` capability because Musico includes built-in NetEase lyrics search.
 
+## Install & Auto-Update
+
+- **Direct Extension URL (`.musicoext` / auto-update):** `https://github.com/SEANPNEX/musico_plugins/releases/latest/download/netease-cloud.musicoext`
+- **All-in-One Bundle (`.zip`):** `https://github.com/SEANPNEX/musico_plugins/releases/latest/download/musico-plugins-all.zip`
+
+Import either URL in Musico via **Extensions → Import from HTTPS URL** (or download and import the file). The extension manifest includes `updateUrl` pointing to the `.musicoext` link above for automatic updates.
+
 ## Features
 
 - **URL Recognition (`canHandle`) & Collection Loading (`fetchCollection`)**
@@ -49,8 +56,8 @@ Cookies are never written to extension logs.
 # Run offline unit tests & strict portability checks
 node plugins/netease-cloud/netease-cloud.test.mjs
 
-# Validate via Musico mock-runner
-node /Users/sean/workspace/musicplayer/docs/extensions/tools/mock-runner.mjs plugins/netease-cloud/netease-cloud.musico.js can-handle "https://music.163.com/#/playlist?id=6792103822"
+# Validate via local conformance runner
+node scripts/runner.mjs plugins/netease-cloud/netease-cloud.musico.js can-handle "https://music.163.com/#/playlist?id=6792103822"
 ```
 
 ## QR Code Login & Auto-Update
