@@ -11,6 +11,7 @@ Licensed under the [MIT License](LICENSE).
 | **YouTube Search** | `youtube-search` | `1.0.0` | `search`, `playlist`, `stream`, `cookie`, `proxy` | `track`, `playlist`, `album` | [`plugins/youtube-search/youtube-search.musico.js`](plugins/youtube-search/youtube-search.musico.js) | [`plugins/youtube-search/README.md`](plugins/youtube-search/README.md) |
 | **Bilibili Search** | `bilibili-search` | `1.0.0` | `search`, `playlist`, `stream`, `cookie`, `proxy` | `track`, `playlist` | [`plugins/bilibili-search/bilibili-search.musico.js`](plugins/bilibili-search/bilibili-search.musico.js) | [`plugins/bilibili-search/README.md`](plugins/bilibili-search/README.md) |
 | **NetEase Cloud Music** | `com.seanpnex.musico.netease` | `1.1.1` | `playlist`, `stream`, `search`, `cookie`, `qr_login`, `proxy` | `track`, `playlist`, `album` | [`plugins/netease-cloud/netease-cloud.musico.js`](plugins/netease-cloud/netease-cloud.musico.js) | [`plugins/netease-cloud/README.md`](plugins/netease-cloud/README.md) |
+| **Apple Music** | `com.seanpnex.musico.applemusic` | `1.0.0` | `search`, `playlist`, `stream`, `lyrics`, `cookie`, `proxy` | `track`, `playlist`, `album` | [`plugins/apple-music/apple-music.musico.js`](plugins/apple-music/apple-music.musico.js) | [`plugins/apple-music/README.md`](plugins/apple-music/README.md) |
 
 ## Installing in Musico
 

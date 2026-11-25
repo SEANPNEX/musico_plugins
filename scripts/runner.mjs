@@ -28,7 +28,7 @@ const __filename = fileURLToPath(import.meta.url);
 
 export const VALID_CAPABILITIES = new Set(['playlist', 'tree', 'stream', 'cookie', 'proxy', 'lyrics', 'search', 'qr_login']);
 export const VALID_SEARCH_KINDS = new Set(['track', 'playlist', 'album']);
-export const VALID_SETTING_TYPES = new Set(['boolean', 'string', 'select']);
+export const VALID_SETTING_TYPES = new Set(['boolean', 'string', 'select', 'server_url']);
 export const VALID_PLATFORMS = new Set(['ios', 'macos', 'android', 'windows']);
 export const VALID_QR_LOGIN_STATUSES = new Set(['pending', 'scanned', 'confirmed', 'expired', 'error']);
 
@@ -75,6 +75,29 @@ export function validateHostPattern(pattern) {
     throw Object.assign(new Error(`Invalid host allowlist pattern: ${pattern}`), { code: 'PERMISSION_DENIED' });
   }
   return trimmed;
+}
+
+export function extractApprovedHost(rawServerUrl) {
+  const trimmed = String(rawServerUrl || '').trim();
+  if (!trimmed) return null;
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return null;
+  }
+  const host = parsed.hostname.toLowerCase().replace(/\.+$/, '');
+  if (!host || host.startsWith('*.') || host.includes('*')) {
+    return null;
+  }
+  try {
+    return validateHostPattern(host);
+  } catch {
+    return null;
+  }
 }
 
 export function isHostAllowed(urlString, allowedPatterns) {
@@ -167,7 +190,14 @@ export function validateManifest(manifest) {
     }
   }
 
-  assert.ok(manifest.permissions && Array.isArray(manifest.permissions.hosts) && manifest.permissions.hosts.length > 0, 'permissions.hosts required');
+  const hasServerUrlSetting = Array.isArray(manifest.settings) &&
+    manifest.settings.some((s) => s && s.type === 'server_url');
+  assert.ok(
+    manifest.permissions &&
+      Array.isArray(manifest.permissions.hosts) &&
+      (manifest.permissions.hosts.length > 0 || hasServerUrlSetting),
+    'permissions.hosts required'
+  );
   for (const hostPat of manifest.permissions.hosts) {
     validateHostPattern(hostPat);
   }
@@ -645,10 +675,22 @@ export function createHostBridge(
 ) {
   assert.ok(VALID_PLATFORMS.has(platform), `Invalid platform: ${platform}`);
   const logs = [];
-  const allowedHosts = manifest.permissions?.hosts || [];
   const defaultSettings = {};
   for (const s of manifest.settings || []) {
     defaultSettings[s.key] = s.default;
+  }
+  const allowedHosts = [...(manifest.permissions?.hosts || [])];
+  const seenHosts = new Set(allowedHosts.map((h) => String(h).trim().toLowerCase().replace(/\.+$/, '')));
+  for (const s of manifest.settings || []) {
+    if (s.type !== 'server_url') continue;
+    const rawVal = Object.prototype.hasOwnProperty.call(settingsOverrides, s.key)
+      ? settingsOverrides[s.key]
+      : s.default;
+    const approved = extractApprovedHost(rawVal);
+    if (approved && !seenHosts.has(approved)) {
+      seenHosts.add(approved);
+      allowedHosts.push(approved);
+    }
   }
 
   function assertAllowedUrl(urlString) {
@@ -1204,6 +1246,50 @@ export async function runSelfTest() {
   assert.equal(qrPoll.status, 'confirmed');
   assert.equal(qrPoll.cookie, 'SID=qr_secret_1; CSRF=c2');
   assert.equal(qrPoll.accountName, 'ProbeUser');
+
+  // 7. Verify server_url setting dynamically allows exact configured host and rejects invalid/other hosts
+  const serverSource = `
+    var manifest = {
+      apiVersion: 1,
+      id: 'com.test.serverurl',
+      name: 'Server URL Probe',
+      version: '1.0.0',
+      capabilities: ['search', 'stream'],
+      permissions: { hosts: [] },
+      settings: [{ key: 'serverUrl', label: 'Server URL', type: 'server_url', default: '' }]
+    };
+    async function search(ctx, req) {
+      var base = String(ctx.settings.get('serverUrl') || '').replace(/\\/+$/, '');
+      var res = await ctx.http.request({ method: 'GET', url: base + '/search' });
+      return { items: [{ kind: 'track', remoteTrackId: '1', title: res.text }], nextCursor: null };
+    }
+    async function resolveStream(ctx, req) {
+      var base = String(ctx.settings.get('serverUrl') || '').replace(/\\/+$/, '');
+      if (req.remoteTrackId === 'evil') {
+        return { url: 'https://evil.example.com/a.m4a', fileExtension: 'm4a' };
+      }
+      return { url: base + '/stream.m4a', fileExtension: 'm4a' };
+    }
+    module.exports = { manifest: manifest, search: search, resolveStream: resolveStream };
+  `;
+  const serverManifest = validateManifest(evaluateCommonJS(serverSource, { strict: true, staticCheck: true }).manifest);
+  const serverExports = evaluateCommonJS(serverSource, { strict: true, staticCheck: true });
+  validateExports(serverManifest, serverExports);
+  const serverExt = { manifest: serverManifest, source: serverSource, exportsObj: serverExports };
+  const serverBridge = createHostBridge(serverManifest, {
+    settingsOverrides: { serverUrl: 'https://am.local.test:8787/' },
+    httpResponder: async () => ({ status: 200, headers: { 'content-type': 'text/plain' }, text: 'ok-server' })
+  });
+  const serverSearch = await runSearch(serverExt, serverBridge, { query: 'test' });
+  assert.equal(serverSearch.items[0].title, 'ok-server');
+  const serverStream = await runResolveStream(serverExt, serverBridge, { remoteTrackId: '1', forceRefresh: false });
+  assert.equal(serverStream.url, 'https://am.local.test:8787/stream.m4a');
+  await assert.rejects(
+    () => runResolveStream(serverExt, serverBridge, { remoteTrackId: 'evil', forceRefresh: false }),
+    (err) => err.code === 'PERMISSION_DENIED'
+  );
+  assert.equal(extractApprovedHost('file:///etc/passwd'), null);
+  assert.equal(extractApprovedHost('https://*.example.com'), null);
 
   return {
     ok: true,
