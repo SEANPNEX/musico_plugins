@@ -8,7 +8,7 @@ var manifest = {
   author: 'SEANPNEX',
   description: 'Search songs, multi-part videos (分P), and collections (合集) from Bilibili, plus import videos, favlists, collections, and series.',
   badgeLabel: 'Bilibili',
-  updateUrl: 'https://github.com/SEANPNEX/musico_plugins/releases/download/bilibili-search-v1.1.0/bilibili-search.musicoext',
+  updateUrl: 'https://github.com/SEANPNEX/musico_plugins/releases/latest/download/bilibili-search.musicoext',
   capabilities: ['search', 'playlist', 'stream', 'cookie', 'proxy'],
   searchKinds: ['track', 'playlist'],
   qualities: [

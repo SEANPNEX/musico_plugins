@@ -58,7 +58,7 @@ test('portability & manifest contract for youtube-search', () => {
   assert.equal(m.badgeLabel, 'YouTube');
   assert.equal(
     m.updateUrl,
-    'https://github.com/SEANPNEX/musico_plugins/releases/download/youtube-search-v1.1.0/youtube-search.musicoext'
+    'https://github.com/SEANPNEX/musico_plugins/releases/latest/download/youtube-search.musicoext'
   );
   assert.deepEqual(m.capabilities, ['search', 'playlist', 'stream', 'cookie', 'proxy']);
   assert.deepEqual(m.searchKinds, ['track', 'playlist', 'album']);

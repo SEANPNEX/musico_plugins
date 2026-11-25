@@ -8,7 +8,7 @@ var manifest = {
   author: 'SEANPNEX',
   description: 'Search, browse albums/playlists, stream, and fetch lyrics from Apple Music via your self-hosted companion server.',
   badgeLabel: 'Apple Music',
-  updateUrl: 'https://github.com/SEANPNEX/musico_plugins/releases/download/apple-music-v1.0.0/apple-music.musicoext',
+  updateUrl: 'https://github.com/SEANPNEX/musico_plugins/releases/latest/download/apple-music.musicoext',
   capabilities: ['search', 'playlist', 'stream', 'lyrics', 'cookie', 'proxy'],
   searchKinds: ['track', 'playlist', 'album'],
   qualities: [

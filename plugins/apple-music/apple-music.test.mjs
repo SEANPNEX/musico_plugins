@@ -57,7 +57,7 @@ test('portability & manifest contract for apple-music', () => {
   assert.equal(m.badgeLabel, 'Apple Music');
   assert.equal(
     m.updateUrl,
-    'https://github.com/SEANPNEX/musico_plugins/releases/download/apple-music-v1.0.0/apple-music.musicoext'
+    'https://github.com/SEANPNEX/musico_plugins/releases/latest/download/apple-music.musicoext'
   );
   assert.deepEqual(m.capabilities, ['search', 'playlist', 'stream', 'lyrics', 'cookie', 'proxy']);
   assert.deepEqual(m.searchKinds, ['track', 'playlist', 'album']);

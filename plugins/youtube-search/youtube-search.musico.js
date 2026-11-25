@@ -8,7 +8,7 @@ var manifest = {
   author: 'SEANPNEX',
   description: 'Search songs, albums, and playlists from YouTube and YouTube Music, plus import playlists, albums, mixes, and single videos.',
   badgeLabel: 'YouTube',
-  updateUrl: 'https://github.com/SEANPNEX/musico_plugins/releases/download/youtube-search-v1.1.0/youtube-search.musicoext',
+  updateUrl: 'https://github.com/SEANPNEX/musico_plugins/releases/latest/download/youtube-search.musicoext',
   capabilities: ['search', 'playlist', 'stream', 'cookie', 'proxy'],
   searchKinds: ['track', 'playlist', 'album'],
   qualities: [

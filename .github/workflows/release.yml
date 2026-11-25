@@ -1,0 +1,141 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Unified release tag override (defaults to UTC CalVer vYYYY.MM.DD)'
+        required: false
+        default: ''
+        type: string
+      force:
+        description: 'Publish even if all plugin versions are already tagged'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build & Publish Unified Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Fetch all tags
+        run: git fetch --tags --force
+
+      - name: Run tests and release metadata check
+        run: |
+          npm test
+          npm run check:release
+
+      - name: Detect plugin version changes and release tag
+        id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_FORCE: ${{ inputs.force }}
+        run: |
+          node scripts/release.mjs --detect-tags --github-output
+          HAS_NEW="$(grep '^has_new_versions=' "$GITHUB_OUTPUT" | tail -n1 | cut -d= -f2-)"
+          SUGGESTED_TAG="$(grep '^suggested_tag=' "$GITHUB_OUTPUT" | tail -n1 | cut -d= -f2-)"
+
+          SHOULD_RELEASE="false"
+          RELEASE_TAG="$SUGGESTED_TAG"
+
+          if [ "$EVENT_NAME" = "push" ] && [ "${REF#refs/tags/v}" != "$REF" ]; then
+            SHOULD_RELEASE="true"
+            RELEASE_TAG="$REF_NAME"
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$INPUT_FORCE" = "true" ] || [ "$HAS_NEW" = "true" ]; then
+              SHOULD_RELEASE="true"
+            fi
+            if [ -n "$INPUT_TAG" ]; then
+              RELEASE_TAG="$INPUT_TAG"
+            fi
+          elif [ "$HAS_NEW" = "true" ]; then
+            SHOULD_RELEASE="true"
+          fi
+
+          {
+            echo "should_release=$SHOULD_RELEASE"
+            echo "release_tag=$RELEASE_TAG"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "should_release=$SHOULD_RELEASE release_tag=$RELEASE_TAG has_new_versions=$HAS_NEW"
+
+      - name: Build unified release assets
+        if: steps.detect.outputs.should_release == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.detect.outputs.release_tag }}
+          UPDATED_PLUGINS: ${{ steps.detect.outputs.updated_plugins }}
+        run: |
+          node scripts/release.mjs --build --tag "$RELEASE_TAG" --updated "$UPDATED_PLUGINS"
+          (cd dist && sha256sum -c SHA256SUMS.txt)
+
+      - name: Create and push release tags
+        if: steps.detect.outputs.should_release == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.detect.outputs.release_tag }}
+          NEW_PLUGIN_TAGS: ${{ steps.detect.outputs.new_plugin_tags }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          TAGS_TO_PUSH=""
+          for tag in $NEW_PLUGIN_TAGS; do
+            if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+              git tag -a "$tag" -m "Release $tag"
+              TAGS_TO_PUSH="$TAGS_TO_PUSH $tag"
+            fi
+          done
+
+          if [ -n "$RELEASE_TAG" ] && ! git rev-parse -q --verify "refs/tags/$RELEASE_TAG" >/dev/null; then
+            git tag -a "$RELEASE_TAG" -m "Musico Plugins $RELEASE_TAG"
+            TAGS_TO_PUSH="$TAGS_TO_PUSH $RELEASE_TAG"
+          fi
+
+          if [ -n "$TAGS_TO_PUSH" ]; then
+            git push origin $TAGS_TO_PUSH
+          else
+            echo "No new tags to push."
+          fi
+
+      - name: Publish GitHub Release
+        if: steps.detect.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.detect.outputs.release_tag }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/*.musicoext dist/plugins.json dist/SHA256SUMS.txt --clobber
+            gh release edit "$RELEASE_TAG" \
+              --title "Musico Plugins ${RELEASE_TAG}" \
+              --notes-file dist/release-notes.md \
+              --latest
+          else
+            gh release create "$RELEASE_TAG" dist/*.musicoext dist/plugins.json dist/SHA256SUMS.txt \
+              --title "Musico Plugins ${RELEASE_TAG}" \
+              --notes-file dist/release-notes.md \
+              --latest
+          fi

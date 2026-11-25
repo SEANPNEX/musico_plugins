@@ -52,7 +52,17 @@ npm test
 
 # Package each plugins/<slug>/<slug>.musico.js into dist/<slug>.musicoext and verify via unzip -l
 npm run pack
+
+# Validate release metadata and build dist/ with plugins.json, SHA256SUMS.txt, and release-notes.md
+npm run check:release
+npm run build:release
 ```
+
+## CI/CD & Releases
+
+- **CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml))**: Runs `npm test` and `npm run build:release` with SHA-256 verification on Node `20` and `22` for every push/PR to `main`, uploading `musico-plugins-dist` artifacts.
+- **Unified Releases ([`.github/workflows/release.yml`](.github/workflows/release.yml))**: Runs on pushes to `main` (and `v*` tags or manual `workflow_dispatch`). When any plugin version lacks a `<slug>-v<version>` git tag, the workflow tags those versions and publishes a unified UTC CalVer release (`vYYYY.MM.DD`) marked `Latest`, containing all `*.musicoext` bundles, `plugins.json`, and `SHA256SUMS.txt`.
+- **Auto-Update URLs**: Every plugin manifest sets `updateUrl` to `https://github.com/SEANPNEX/musico_plugins/releases/latest/download/<slug>.musicoext` so Musico checks against the latest unified release.
 
 Invoke hooks or strict portability checks directly via `scripts/runner.mjs`:
 

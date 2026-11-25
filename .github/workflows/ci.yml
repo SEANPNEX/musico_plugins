@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-pack:
+    name: Test & Pack (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Verify zip/unzip availability
+        run: |
+          command -v zip
+          command -v unzip
+
+      - name: Run conformance checks and plugin tests
+        run: npm test
+
+      - name: Build and verify release packages
+        run: |
+          npm run build:release
+          (cd dist && sha256sum -c SHA256SUMS.txt)
+
+      - name: Upload built plugin artifacts
+        if: matrix.node-version == '22'
+        uses: actions/upload-artifact@v4
+        with:
+          name: musico-plugins-dist
+          retention-days: 14
+          path: |
+            dist/*.musicoext
+            dist/plugins.json
+            dist/SHA256SUMS.txt

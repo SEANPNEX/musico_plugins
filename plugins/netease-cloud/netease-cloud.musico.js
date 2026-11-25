@@ -8,7 +8,7 @@ var manifest = {
   author: 'SEANPNEX',
   description: 'Playlists, albums, artists, single tracks, cloud search, QR code login, and EAPI stream resolution for NetEase Cloud Music.',
   badgeLabel: 'NetEase',
-  updateUrl: 'https://github.com/SEANPNEX/musico_plugins/releases/download/netease-cloud-v1.2.0/netease-cloud.musicoext',
+  updateUrl: 'https://github.com/SEANPNEX/musico_plugins/releases/latest/download/netease-cloud.musicoext',
   capabilities: ['playlist', 'stream', 'search', 'cookie', 'qr_login', 'proxy'],
   searchKinds: ['track', 'playlist', 'album'],
   qualities: [

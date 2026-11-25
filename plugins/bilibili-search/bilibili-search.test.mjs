@@ -58,7 +58,7 @@ test('portability & manifest contract for bilibili-search (no album concept)', (
   assert.equal(m.badgeLabel, 'Bilibili');
   assert.equal(
     m.updateUrl,
-    'https://github.com/SEANPNEX/musico_plugins/releases/download/bilibili-search-v1.1.0/bilibili-search.musicoext'
+    'https://github.com/SEANPNEX/musico_plugins/releases/latest/download/bilibili-search.musicoext'
   );
   assert.deepEqual(m.capabilities, ['search', 'playlist', 'stream', 'cookie', 'proxy']);
   assert.deepEqual(m.searchKinds, ['track', 'playlist']);

@@ -10,6 +10,8 @@
   },
   "scripts": {
     "test": "node scripts/test.mjs",
-    "pack": "node scripts/pack.mjs"
+    "pack": "node scripts/pack.mjs",
+    "check:release": "node scripts/release.mjs --check",
+    "build:release": "node scripts/release.mjs --build"
   }
 }
