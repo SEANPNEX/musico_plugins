@@ -51,5 +51,6 @@ jobs:
           retention-days: 14
           path: |
             dist/*.musicoext
+            dist/musico-plugins-all.zip
             dist/plugins.json
             dist/SHA256SUMS.txt

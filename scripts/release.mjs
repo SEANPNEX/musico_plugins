@@ -12,7 +12,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { discoverPlugins, packAll } from './pack.mjs';
+import { ALL_BUNDLE_FILENAME, discoverPlugins, packAll } from './pack.mjs';
 import { loadExtension } from './runner.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -161,6 +161,7 @@ export function buildRelease({
     if (
       entry.isFile() &&
       (entry.name.endsWith('.musicoext') ||
+        entry.name === ALL_BUNDLE_FILENAME ||
         entry.name === 'plugins.json' ||
         entry.name === 'SHA256SUMS.txt' ||
         entry.name === 'release-notes.md')
@@ -191,11 +192,23 @@ export function buildRelease({
     checksumEntries.push({ file: assetName, sha256 });
   }
 
+  const allBundlePath = path.join(distDir, ALL_BUNDLE_FILENAME);
+  assert.ok(fs.existsSync(allBundlePath), `Missing unified bundle ${ALL_BUNDLE_FILENAME} in dist/`);
+  const allBundleSizeBytes = fs.statSync(allBundlePath).size;
+  const allBundleSha256 = sha256File(allBundlePath);
+  checksumEntries.push({ file: ALL_BUNDLE_FILENAME, sha256: allBundleSha256 });
+
   const catalog = {
     schemaVersion: 1,
     releaseTag,
     generatedAt,
     repository,
+    bundle: {
+      asset: ALL_BUNDLE_FILENAME,
+      sizeBytes: allBundleSizeBytes,
+      sha256: allBundleSha256,
+      pluginCount: pluginEntries.length
+    },
     plugins: pluginEntries
   };
 
@@ -231,6 +244,10 @@ export function buildRelease({
     );
   }
   notesLines.push(
+    '',
+    '### All-in-One Bundle',
+    '',
+    `- \`${ALL_BUNDLE_FILENAME}\` (\`${allBundleSizeBytes}\` bytes, SHA-256 \`${allBundleSha256.slice(0, 12)}\`) contains all ${pluginEntries.length} plugins for single-file import.`,
     '',
     '### Auto-Update & Verification',
     '',

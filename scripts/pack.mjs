@@ -19,6 +19,7 @@ const DEFAULT_ROOT = path.resolve(__dirname, '..');
 
 const MAX_ARCHIVE_ENTRIES = 256;
 const MAX_UNCOMPRESSED_BYTES = 16 * 1024 * 1024;
+export const ALL_BUNDLE_FILENAME = 'musico-plugins-all.zip';
 
 export function discoverPlugins(rootDir = DEFAULT_ROOT) {
   const pluginsDir = path.join(rootDir, 'plugins');
@@ -131,6 +132,44 @@ export function packPlugin({ slug, entryPath, iconPath = null, distDir }) {
   };
 }
 
+export function packAllBundle({
+  packedResults,
+  distDir,
+  bundleFileName = ALL_BUNDLE_FILENAME
+} = {}) {
+  assert.ok(Array.isArray(packedResults) && packedResults.length > 0, 'packAllBundle requires at least one packed plugin');
+  fs.mkdirSync(distDir, { recursive: true });
+  const outFile = path.join(distDir, bundleFileName);
+  fs.rmSync(outFile, { force: true });
+
+  const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'musico-pack-all-'));
+  const fileNames = [];
+  try {
+    for (const packed of packedResults) {
+      const name = path.basename(packed.outFile);
+      fs.copyFileSync(packed.outFile, path.join(stagingDir, name));
+      fileNames.push(name);
+    }
+    execFileSync('zip', ['-X', '-q', outFile, ...fileNames], { cwd: stagingDir });
+  } finally {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+  }
+
+  execFileSync('unzip', ['-t', '-q', outFile]);
+  const unzipListing = execFileSync('unzip', ['-l', outFile], { encoding: 'utf8' });
+  for (const name of fileNames) {
+    assert.ok(unzipListing.includes(name), `${bundleFileName} missing ${name} in unzip -l`);
+  }
+
+  return {
+    fileName: bundleFileName,
+    outFile,
+    sizeBytes: fs.statSync(outFile).size,
+    pluginCount: fileNames.length,
+    unzipListing
+  };
+}
+
 export function packAll({ rootDir = DEFAULT_ROOT, slugs = [] } = {}) {
   const all = discoverPlugins(rootDir);
   let targets = all;
@@ -158,6 +197,13 @@ export function packAll({ rootDir = DEFAULT_ROOT, slugs = [] } = {}) {
     console.log(`[PACKED] ${packed.slug} (${packed.id}@${packed.version}) -> ${path.relative(rootDir, packed.outFile)} (${packed.sizeBytes} bytes)`);
     console.log(packed.unzipListing.trimEnd());
   }
+
+  if (slugs.length === 0 && results.length > 0) {
+    const bundle = packAllBundle({ packedResults: results, distDir });
+    console.log(`[PACKED] all-in-one (${bundle.pluginCount} plugins) -> ${path.relative(rootDir, bundle.outFile)} (${bundle.sizeBytes} bytes)`);
+    console.log(bundle.unzipListing.trimEnd());
+  }
+
   return results;
 }
 
