@@ -53,16 +53,24 @@ test('portability & manifest contract for bilibili-search (no album concept)', (
   assert.equal(m.apiVersion, 1);
   assert.equal(m.id, 'bilibili-search');
   assert.equal(m.name, 'Bilibili Search');
-  assert.equal(m.version, '1.0.0');
+  assert.equal(m.version, '1.1.0');
   assert.equal(m.author, 'SEANPNEX');
   assert.equal(m.badgeLabel, 'Bilibili');
   assert.equal(
     m.updateUrl,
-    'https://github.com/SEANPNEX/musico_plugins/releases/download/bilibili-search-v1.0.0/bilibili-search.musicoext'
+    'https://github.com/SEANPNEX/musico_plugins/releases/download/bilibili-search-v1.1.0/bilibili-search.musicoext'
   );
   assert.deepEqual(m.capabilities, ['search', 'playlist', 'stream', 'cookie', 'proxy']);
   assert.deepEqual(m.searchKinds, ['track', 'playlist']);
   assert.equal(m.searchKinds.includes('album'), false);
+  assert.deepEqual(m.qualities, [
+    { id: 'highest', label: 'Hi-Res / 192k', badge: 'FLAC', lossless: true },
+    { id: 'high', label: 'High (192k)', badge: '192k' },
+    { id: 'standard', label: 'Standard (132k)', badge: '132k' },
+    { id: 'low', label: 'Low (64k)', badge: '64k' }
+  ]);
+  assert.equal(m.defaultStreamQuality, 'standard');
+  assert.equal(m.defaultDownloadQuality, 'highest');
   assert.equal(m.urlPatterns.length, 2);
   for (const pat of m.urlPatterns) {
     assert.doesNotThrow(() => new RegExp(pat));
@@ -518,6 +526,7 @@ test('resolveStream: Bilibili DASH/FLAC priority, bare IDs, and cookie privacy',
             dash: {
               audio: [
                 { id: 30216, baseUrl: 'https://upos-sz-mirrorcos.bilivideo.com/64k.m4s', mimeType: 'audio/mp4', bandwidth: 64000 },
+                { id: 30232, baseUrl: 'https://upos-sz-mirrorcos.bilivideo.com/132k.m4s', mimeType: 'audio/mp4', bandwidth: 132000 },
                 { id: 30280, baseUrl: 'https://upos-sz-mirrorhw.bilivideo.com/192k.m4s', mimeType: 'audio/mp4', bandwidth: 192000 }
               ],
               flac: {
@@ -529,9 +538,34 @@ test('resolveStream: Bilibili DASH/FLAC priority, bare IDs, and cookie privacy',
       };
     }
   });
-  const dashRes = await runResolveStream(extA, bridgeA, { remoteTrackId: 'bili:BV1dashTest1' });
-  assert.equal(dashRes.fileExtension, 'm4a');
-  assert.ok(dashRes.url.includes('192k.m4s'));
+  const dashStd = await runResolveStream(extA, bridgeA, { remoteTrackId: 'bili:BV1dashTest1', purpose: 'stream' });
+  assert.equal(dashStd.fileExtension, 'm4a');
+  assert.ok(dashStd.url.includes('132k.m4s'));
+  assert.equal(dashStd.actualQuality, 'standard');
+  assert.equal(dashStd.qualityLabel, '132k');
+  assert.equal(dashStd.bitrateKbps, 132);
+
+  const dashHigh = await runResolveStream(extA, bridgeA, { remoteTrackId: 'bili:BV1dashTest1', quality: 'high' });
+  assert.equal(dashHigh.fileExtension, 'm4a');
+  assert.ok(dashHigh.url.includes('192k.m4s'));
+  assert.equal(dashHigh.actualQuality, 'high');
+  assert.equal(dashHigh.qualityLabel, '192k');
+  assert.equal(dashHigh.bitrateKbps, 192);
+
+  const dashLow = await runResolveStream(extA, bridgeA, { remoteTrackId: 'bili:BV1dashTest1', quality: 'low' });
+  assert.equal(dashLow.fileExtension, 'm4a');
+  assert.ok(dashLow.url.includes('64k.m4s'));
+  assert.equal(dashLow.actualQuality, 'low');
+  assert.equal(dashLow.qualityLabel, '64k');
+  assert.equal(dashLow.bitrateKbps, 64);
+
+  const dashDl = await runResolveStream(extA, bridgeA, { remoteTrackId: 'bili:BV1dashTest1', purpose: 'download' });
+  assert.equal(dashDl.fileExtension, 'flac');
+  assert.equal(dashDl.mimeType, 'audio/flac');
+  assert.ok(dashDl.url.includes('hi.flac'));
+  assert.equal(dashDl.actualQuality, 'highest');
+  assert.equal(dashDl.qualityLabel, 'FLAC');
+  assert.equal(dashDl.bitrateKbps, 1411);
 
   const { ext, bridge, logs } = createBiliMock({
     httpHandler: async ({ url, headers }) => {

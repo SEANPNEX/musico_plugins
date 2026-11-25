@@ -98,6 +98,27 @@ export function packPlugin({ slug, entryPath, iconPath = null, distDir }) {
   if (ext.manifest.updateUrl !== undefined) {
     assert.equal(packedExt.manifest.updateUrl, ext.manifest.updateUrl, `Packed manifest.updateUrl mismatch for ${slug}`);
   }
+  if (ext.manifest.qualities !== undefined) {
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(packedExt.manifest.qualities)),
+      JSON.parse(JSON.stringify(ext.manifest.qualities)),
+      `Packed manifest.qualities mismatch for ${slug}`
+    );
+  }
+  if (ext.manifest.defaultStreamQuality !== undefined) {
+    assert.equal(
+      packedExt.manifest.defaultStreamQuality,
+      ext.manifest.defaultStreamQuality,
+      `Packed manifest.defaultStreamQuality mismatch for ${slug}`
+    );
+  }
+  if (ext.manifest.defaultDownloadQuality !== undefined) {
+    assert.equal(
+      packedExt.manifest.defaultDownloadQuality,
+      ext.manifest.defaultDownloadQuality,
+      `Packed manifest.defaultDownloadQuality mismatch for ${slug}`
+    );
+  }
 
   return {
     slug,

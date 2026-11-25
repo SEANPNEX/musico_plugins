@@ -53,15 +53,23 @@ test('portability & manifest contract for youtube-search', () => {
   assert.equal(m.apiVersion, 1);
   assert.equal(m.id, 'youtube-search');
   assert.equal(m.name, 'YouTube Search');
-  assert.equal(m.version, '1.0.0');
+  assert.equal(m.version, '1.1.0');
   assert.equal(m.author, 'SEANPNEX');
   assert.equal(m.badgeLabel, 'YouTube');
   assert.equal(
     m.updateUrl,
-    'https://github.com/SEANPNEX/musico_plugins/releases/download/youtube-search-v1.0.0/youtube-search.musicoext'
+    'https://github.com/SEANPNEX/musico_plugins/releases/download/youtube-search-v1.1.0/youtube-search.musicoext'
   );
   assert.deepEqual(m.capabilities, ['search', 'playlist', 'stream', 'cookie', 'proxy']);
   assert.deepEqual(m.searchKinds, ['track', 'playlist', 'album']);
+  assert.deepEqual(m.qualities, [
+    { id: 'highest', label: 'Best Available', badge: 'Best' },
+    { id: 'high', label: 'High', badge: 'High' },
+    { id: 'standard', label: 'Standard', badge: 'Std' },
+    { id: 'low', label: 'Low (Data Saver)', badge: 'Low' }
+  ]);
+  assert.equal(m.defaultStreamQuality, 'standard');
+  assert.equal(m.defaultDownloadQuality, 'highest');
   assert.equal(m.urlPatterns.length, 2);
   for (const pat of m.urlPatterns) {
     assert.doesNotThrow(() => new RegExp(pat));
@@ -434,14 +442,17 @@ test('fetchCollection: YouTube album browse header fallback, playlist pagination
   assert.equal(single.tracks[0].durationSec, 212);
 });
 
-test('resolveStream: Apple enforces MP4/AAC-only, non-Apple honors format pref, bounded range probes only', async () => {
+test('resolveStream: Apple enforces MP4/AAC-only, honors req.quality/req.purpose and format pref, bounded range probes only', async () => {
   const adaptiveFormats = [
+    { itag: 141, url: 'https://rr1---sn-a.googlevideo.com/videoplayback?itag=141&expire=1900000000', mimeType: 'audio/mp4; codecs="mp4a.40.2"', bitrate: 256000, contentLength: '4800000' },
     { itag: 251, url: 'https://rr1---sn-a.googlevideo.com/videoplayback?itag=251&expire=1900000000', mimeType: 'audio/webm; codecs="opus"', bitrate: 160000, contentLength: '2500000' },
     { itag: 250, url: 'https://rr1---sn-a.googlevideo.com/videoplayback?itag=250&expire=1900000000', mimeType: 'audio/webm; codecs="opus"', bitrate: 70000, contentLength: '1100000' },
-    { itag: 140, url: 'https://rr1---sn-a.googlevideo.com/videoplayback?itag=140&expire=1900000000', mimeType: 'audio/mp4; codecs="mp4a.40.2"', bitrate: 128000, contentLength: '2400000' }
+    { itag: 249, url: 'https://rr1---sn-a.googlevideo.com/videoplayback?itag=249&expire=1900000000', mimeType: 'audio/webm; codecs="opus"', bitrate: 50000, contentLength: '800000' },
+    { itag: 140, url: 'https://rr1---sn-a.googlevideo.com/videoplayback?itag=140&expire=1900000000', mimeType: 'audio/mp4; codecs="mp4a.40.2"', bitrate: 128000, contentLength: '2400000' },
+    { itag: 139, url: 'https://rr1---sn-a.googlevideo.com/videoplayback?itag=139&expire=1900000000', mimeType: 'audio/mp4; codecs="mp4a.40.5"', bitrate: 48000, contentLength: '900000' }
   ];
 
-  async function runFor(platform, youtubeAudioFormat) {
+  async function runFor(platform, youtubeAudioFormat, streamReq = {}) {
     const { ext, bridge, requests } = createYtMock({
       platform,
       settings: { youtubeAudioFormat },
@@ -463,25 +474,60 @@ test('resolveStream: Apple enforces MP4/AAC-only, non-Apple honors format pref, 
         throw new Error('Unexpected URL ' + url);
       }
     });
-    const stream = await runResolveStream(ext, bridge, { remoteTrackId: 'yt:m9SMT5ipbxk', forceRefresh: false });
+    const stream = await runResolveStream(ext, bridge, { remoteTrackId: 'yt:m9SMT5ipbxk', forceRefresh: false, ...streamReq });
     return { stream, requests };
   }
 
+  // Default stream (no quality/purpose -> standard): Apple stays MP4/AAC itag=140
   const iosRes = await runFor('ios', 'opus');
   assert.equal(iosRes.stream.fileExtension, 'm4a');
   assert.equal(iosRes.stream.mimeType, 'audio/mp4');
   assert.ok(iosRes.stream.url.includes('itag=140'));
+  assert.equal(iosRes.stream.actualQuality, 'standard');
+  assert.equal(iosRes.stream.qualityLabel, '128k');
+  assert.equal(iosRes.stream.bitrateKbps, 128);
   const iosRanges = iosRes.requests.filter((r) => r.url.includes('googlevideo.com')).map((r) => r.headers.Range);
   assert.deepEqual(iosRanges, ['bytes=0-1023', 'bytes=1048576-1049599']);
 
-  const macRes = await runFor('macos', 'auto');
-  assert.equal(macRes.stream.fileExtension, 'm4a');
-  assert.ok(macRes.stream.url.includes('itag=140'));
+  // Apple download purpose -> highest (itag=141 256k), low -> itag=139 (48k)
+  const macDl = await runFor('macos', 'auto', { purpose: 'download' });
+  assert.equal(macDl.stream.fileExtension, 'm4a');
+  assert.ok(macDl.stream.url.includes('itag=141'));
+  assert.equal(macDl.stream.actualQuality, 'highest');
+  assert.equal(macDl.stream.qualityLabel, '256k');
+  assert.equal(macDl.stream.bitrateKbps, 256);
 
-  const androidAuto = await runFor('android', 'auto');
-  assert.equal(androidAuto.stream.fileExtension, 'webm');
-  assert.equal(androidAuto.stream.mimeType, 'audio/webm');
-  assert.ok(androidAuto.stream.url.includes('itag=251'));
+  const iosLow = await runFor('ios', 'auto', { quality: 'low', purpose: 'stream' });
+  assert.equal(iosLow.stream.fileExtension, 'm4a');
+  assert.ok(iosLow.stream.url.includes('itag=139'));
+  assert.equal(iosLow.stream.actualQuality, 'low');
+  assert.equal(iosLow.stream.qualityLabel, '48k');
+  assert.equal(iosLow.stream.bitrateKbps, 48);
+
+  // Non-Apple auto: standard -> 250 (70k webm), high -> 251 (160k webm), highest -> 141 (256k m4a), opus+highest -> 251 (160k webm)
+  const androidStd = await runFor('android', 'auto', { purpose: 'stream' });
+  assert.equal(androidStd.stream.fileExtension, 'webm');
+  assert.equal(androidStd.stream.mimeType, 'audio/webm');
+  assert.ok(androidStd.stream.url.includes('itag=250'));
+  assert.equal(androidStd.stream.actualQuality, 'standard');
+  assert.equal(androidStd.stream.qualityLabel, '70k');
+  assert.equal(androidStd.stream.bitrateKbps, 70);
+
+  const androidHigh = await runFor('android', 'auto', { quality: 'high' });
+  assert.equal(androidHigh.stream.fileExtension, 'webm');
+  assert.ok(androidHigh.stream.url.includes('itag=251'));
+  assert.equal(androidHigh.stream.actualQuality, 'high');
+  assert.equal(androidHigh.stream.qualityLabel, '160k');
+  assert.equal(androidHigh.stream.bitrateKbps, 160);
+
+  const androidDl = await runFor('android', 'auto', { purpose: 'download' });
+  assert.equal(androidDl.stream.fileExtension, 'm4a');
+  assert.ok(androidDl.stream.url.includes('itag=141'));
+  assert.equal(androidDl.stream.actualQuality, 'highest');
+
+  const winOpusHighest = await runFor('windows', 'opus', { quality: 'highest' });
+  assert.equal(winOpusHighest.stream.fileExtension, 'webm');
+  assert.ok(winOpusHighest.stream.url.includes('itag=251'));
 
   const winM4a = await runFor('windows', 'm4a');
   assert.equal(winM4a.stream.fileExtension, 'm4a');

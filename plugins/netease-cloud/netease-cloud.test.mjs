@@ -79,16 +79,24 @@ test('manifest, exports, host allowlist, and strict portability check', () => {
   assert.equal(m.apiVersion, 1);
   assert.equal(m.id, 'com.seanpnex.musico.netease');
   assert.equal(m.name, 'NetEase Cloud Music');
-  assert.equal(m.version, '1.1.1');
+  assert.equal(m.version, '1.2.0');
   assert.equal(m.author, 'SEANPNEX');
   assert.equal(m.badgeLabel, 'NetEase');
   assert.equal(
     m.updateUrl,
-    'https://github.com/SEANPNEX/musico_plugins/releases/download/netease-cloud-v1.1.1/netease-cloud.musicoext'
+    'https://github.com/SEANPNEX/musico_plugins/releases/download/netease-cloud-v1.2.0/netease-cloud.musicoext'
   );
   assert.deepEqual(plain(m.capabilities), ['playlist', 'stream', 'search', 'cookie', 'qr_login', 'proxy']);
   assert.equal(m.capabilities.includes('lyrics'), false);
   assert.deepEqual(plain(m.searchKinds), ['track', 'playlist', 'album']);
+  assert.deepEqual(
+    plain(m.qualities).map((q) => q.id),
+    ['highest', 'jymaster', 'sky', 'jyeffect', 'hires', 'lossless', 'exhigh', 'higher', 'standard']
+  );
+  assert.equal(plain(m.qualities)[0].badge, 'Hi-Res');
+  assert.equal(plain(m.qualities)[0].lossless, true);
+  assert.equal(m.defaultStreamQuality, 'standard');
+  assert.equal(m.defaultDownloadQuality, 'highest');
 
   assert.deepEqual(
     Object.keys(ext.exportsObj).sort(),
@@ -472,9 +480,75 @@ test('resolveStream handles quality fallback, legacy endpoint fallback, trial pr
   assert.equal(s1.url, 'https://m801.music.126.net/track.flac');
   assert.equal(s1.fileExtension, 'flac');
   assert.equal(s1.mimeType, 'audio/flac');
+  assert.equal(s1.actualQuality, 'exhigh');
+  assert.equal(s1.qualityLabel, '320k');
+  assert.equal(s1.bitrateKbps, 320);
   assert.equal(s1.headers.Referer, 'https://music.163.com/');
   assert.ok(s1.headers['User-Agent']);
   assert.equal(s1.contentLength, 30000000);
+
+  // Case 1b: req.quality='highest' overrides setting and cascades jymaster -> hires -> lossless -> exhigh -> standard
+  const highestAttempts = [];
+  const bridgeHighest = createHostBridge(ext.manifest, {
+    settingsOverrides: { quality: 'standard' },
+    httpResponder: async ({ url, body }) => {
+      if (url === 'https://music.163.com/eapi/song/enhance/player/url/v1') {
+        const p = decodeAndVerifyEapiBody(body, '/api/song/enhance/player/url/v1');
+        highestAttempts.push(p.level);
+        if (p.level === 'lossless') {
+          return {
+            status: 200,
+            headers: {},
+            text: JSON.stringify({
+              code: 200,
+              data: [{ id: p.ids[0], url: 'https://m801.music.126.net/hires-fallback.flac', type: 'flac', level: 'lossless', br: 999000 }]
+            })
+          };
+        }
+        return { status: 200, headers: {}, text: JSON.stringify({ code: 200, data: [{ id: p.ids[0], url: null }] }) };
+      }
+      return { status: 404, headers: {}, text: '' };
+    }
+  });
+  const sHighest = await runResolveStream(ext, bridgeHighest, {
+    remoteTrackId: '1295601353',
+    quality: 'highest',
+    purpose: 'download'
+  });
+  assert.deepEqual(highestAttempts, ['jymaster', 'hires', 'lossless']);
+  assert.equal(sHighest.actualQuality, 'lossless');
+  assert.equal(sHighest.qualityLabel, 'FLAC');
+  assert.equal(sHighest.bitrateKbps, 999);
+
+  // Case 1c: empty settings.quality falls back to req.purpose ('download' -> 'highest', 'stream' -> 'standard')
+  const purposeLevels = [];
+  const bridgePurposeFallback = createHostBridge(ext.manifest, {
+    settingsOverrides: { quality: '' },
+    httpResponder: async ({ url, body }) => {
+      if (url === 'https://music.163.com/eapi/song/enhance/player/url/v1') {
+        const p = decodeAndVerifyEapiBody(body, '/api/song/enhance/player/url/v1');
+        purposeLevels.push(p.level);
+        return {
+          status: 200,
+          headers: {},
+          text: JSON.stringify({
+            code: 200,
+            data: [{ id: p.ids[0], url: `https://m801.music.126.net/${p.level}.mp3`, type: 'mp3', level: p.level, br: p.level === 'jymaster' ? 1920000 : 128000 }]
+          })
+        };
+      }
+      return { status: 404, headers: {}, text: '' };
+    }
+  });
+  const sPurposeDl = await runResolveStream(ext, bridgePurposeFallback, { remoteTrackId: '1295601353', purpose: 'download' });
+  const sPurposeStr = await runResolveStream(ext, bridgePurposeFallback, { remoteTrackId: '1295601353', purpose: 'stream' });
+  assert.deepEqual(purposeLevels, ['jymaster', 'standard']);
+  assert.equal(sPurposeDl.actualQuality, 'jymaster');
+  assert.equal(sPurposeDl.qualityLabel, 'Master');
+  assert.equal(sPurposeDl.bitrateKbps, 1920);
+  assert.equal(sPurposeStr.actualQuality, 'standard');
+  assert.equal(sPurposeStr.qualityLabel, '128k');
+  assert.equal(sPurposeStr.bitrateKbps, 128);
 
   // Case 2: sky sends immerseType='c51', HTTPS HEAD fails -> preserves http://, legacy fallback works
   const bridgeLegacyHttp = createHostBridge(ext.manifest, {

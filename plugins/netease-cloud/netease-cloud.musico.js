@@ -4,13 +4,26 @@ var manifest = {
   apiVersion: 1,
   id: 'com.seanpnex.musico.netease',
   name: 'NetEase Cloud Music',
-  version: '1.1.1',
+  version: '1.2.0',
   author: 'SEANPNEX',
   description: 'Playlists, albums, artists, single tracks, cloud search, QR code login, and EAPI stream resolution for NetEase Cloud Music.',
   badgeLabel: 'NetEase',
-  updateUrl: 'https://github.com/SEANPNEX/musico_plugins/releases/download/netease-cloud-v1.1.1/netease-cloud.musicoext',
+  updateUrl: 'https://github.com/SEANPNEX/musico_plugins/releases/download/netease-cloud-v1.2.0/netease-cloud.musicoext',
   capabilities: ['playlist', 'stream', 'search', 'cookie', 'qr_login', 'proxy'],
   searchKinds: ['track', 'playlist', 'album'],
+  qualities: [
+    { id: 'highest', label: 'Highest Available', badge: 'Hi-Res', lossless: true },
+    { id: 'jymaster', label: 'JY Master', badge: 'Master', lossless: true },
+    { id: 'sky', label: 'Sky (Spatial Audio)', badge: 'Spatial', lossless: true },
+    { id: 'jyeffect', label: 'JY Effect (Surround)', badge: 'Surround', lossless: true },
+    { id: 'hires', label: 'Hi-Res', badge: 'Hi-Res', lossless: true },
+    { id: 'lossless', label: 'Lossless (FLAC)', badge: 'FLAC', lossless: true },
+    { id: 'exhigh', label: 'ExHigh (320 kbps)', badge: '320k' },
+    { id: 'higher', label: 'Higher (192 kbps)', badge: '192k' },
+    { id: 'standard', label: 'Standard (128 kbps)', badge: '128k' }
+  ],
+  defaultStreamQuality: 'standard',
+  defaultDownloadQuality: 'highest',
   urlPatterns: [
     '^https?://(y\\.)?music\\.163\\.com/(#/)?(m/)?(playlist|album|song|artist)(\\?.*id=\\d+|/\\d+)',
     '^https?://163cn\\.(tv|link)/[A-Za-z0-9_-]+'
@@ -1375,8 +1388,27 @@ async function fetchCollection(ctx, req) {
   throw extError('INVALID_URL', 'Unsupported NetEase resource type.');
 }
 
+var NETEASE_QUALITY_META = {
+  jymaster: { label: 'Master', kbps: 2400 },
+  sky: { label: 'Spatial', kbps: 1411 },
+  jyeffect: { label: 'Surround', kbps: 1411 },
+  hires: { label: 'Hi-Res', kbps: 1920 },
+  lossless: { label: 'FLAC', kbps: 999 },
+  exhigh: { label: '320k', kbps: 320 },
+  higher: { label: '192k', kbps: 192 },
+  standard: { label: '128k', kbps: 128 }
+};
+
+function normalizeNeteaseQuality(raw, allowHighest) {
+  var q = raw ? String(raw).trim().toLowerCase() : '';
+  if (!q) return '';
+  if (allowHighest && q === 'highest') return 'highest';
+  return Object.prototype.hasOwnProperty.call(NETEASE_QUALITY_META, q) ? q : '';
+}
+
 function levelToBitrate(level) {
   var map = {
+    highest: 999000,
     standard: 128000,
     higher: 192000,
     exhigh: 320000,
@@ -1387,6 +1419,28 @@ function levelToBitrate(level) {
     jymaster: 999000
   };
   return map[level] || 320000;
+}
+
+function resolveNeteaseQualityMeta(chosen, triedLevel, fmt, requestedQuality) {
+  var actual = normalizeNeteaseQuality(chosen && chosen.level, false) ||
+    normalizeNeteaseQuality(triedLevel, false);
+  if (!actual) {
+    var brNum = chosen && typeof chosen.br === 'number' ? chosen.br : 0;
+    if (fmt && fmt.fileExtension === 'flac') actual = 'lossless';
+    else if (brNum >= 320000) actual = 'exhigh';
+    else if (brNum >= 192000) actual = 'higher';
+    else if (brNum > 0) actual = 'standard';
+    else actual = requestedQuality === 'highest' ? 'exhigh' : (normalizeNeteaseQuality(requestedQuality, false) || 'standard');
+  }
+  var meta = NETEASE_QUALITY_META[actual] || NETEASE_QUALITY_META.standard;
+  var kbps = chosen && typeof chosen.br === 'number' && isFinite(chosen.br) && chosen.br > 0
+    ? Math.max(1, Math.round(chosen.br / 1000))
+    : meta.kbps;
+  return {
+    actualQuality: actual,
+    qualityLabel: meta.label,
+    bitrateKbps: kbps
+  };
 }
 
 function extractUrlExtension(urlStr) {
@@ -1498,7 +1552,10 @@ async function resolveStream(ctx, req) {
   var cookie = req && req.cookie ? String(req.cookie) : null;
   var authInfo = buildCookieAndHeader(ctx, cookie);
 
-  var quality = ctx && ctx.settings ? String(ctx.settings.get('quality') || 'exhigh') : 'exhigh';
+  var reqQuality = normalizeNeteaseQuality(req && req.quality, true);
+  var settingQuality = ctx && ctx.settings ? normalizeNeteaseQuality(ctx.settings.get('quality'), true) : '';
+  var purpose = req && req.purpose ? String(req.purpose).trim().toLowerCase() : '';
+  var quality = reqQuality || settingQuality || (purpose === 'download' ? 'highest' : 'standard');
   var allowTrialSetting = ctx && ctx.settings ? ctx.settings.get('allowTrialPreview') : true;
   var allowTrialPreview =
     allowTrialSetting === null || allowTrialSetting === undefined
@@ -1507,15 +1564,21 @@ async function resolveStream(ctx, req) {
 
   ctx.log.info('resolveStream track=' + String(numericId) + ' level=' + quality);
 
-  var levelsToTry = [quality];
-  if (quality !== 'exhigh' && quality !== 'higher' && quality !== 'standard') {
-    levelsToTry.push('exhigh');
-  }
-  if (quality !== 'standard') {
-    levelsToTry.push('standard');
+  var levelsToTry;
+  if (quality === 'highest') {
+    levelsToTry = ['jymaster', 'hires', 'lossless', 'exhigh', 'standard'];
+  } else {
+    levelsToTry = [quality];
+    if (quality !== 'exhigh' && quality !== 'higher' && quality !== 'standard') {
+      levelsToTry.push('exhigh');
+    }
+    if (quality !== 'standard') {
+      levelsToTry.push('standard');
+    }
   }
 
   var chosen = null;
+  var triedLevel = '';
   var sawBlockedTrial = false;
   var lastNetworkErr = null;
 
@@ -1537,6 +1600,7 @@ async function resolveStream(ctx, req) {
         continue;
       }
       chosen = candidate;
+      triedLevel = levelsToTry[i];
       break;
     }
   }
@@ -1575,6 +1639,7 @@ async function resolveStream(ctx, req) {
 
   var finalUrl = await negotiateHttpsCdnUrl(ctx, chosen.url, authInfo.profile.userAgent);
   var fmt = mapFormatInfo(chosen);
+  var qMeta = resolveNeteaseQualityMeta(chosen, triedLevel, fmt, quality);
   var expiSec = typeof chosen.expi === 'number' && chosen.expi > 0 ? chosen.expi : 1200;
 
   var out = {
@@ -1585,7 +1650,10 @@ async function resolveStream(ctx, req) {
     },
     fileExtension: fmt.fileExtension,
     mimeType: fmt.mimeType,
-    expiresAtMs: Date.now() + expiSec * 1000
+    expiresAtMs: Date.now() + expiSec * 1000,
+    actualQuality: qMeta.actualQuality,
+    qualityLabel: qMeta.qualityLabel,
+    bitrateKbps: qMeta.bitrateKbps
   };
   if (typeof chosen.size === 'number' && chosen.size > 0) {
     out.contentLength = chosen.size;

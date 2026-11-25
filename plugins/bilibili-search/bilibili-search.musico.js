@@ -4,13 +4,21 @@ var manifest = {
   apiVersion: 1,
   id: 'bilibili-search',
   name: 'Bilibili Search',
-  version: '1.0.0',
+  version: '1.1.0',
   author: 'SEANPNEX',
   description: 'Search songs, multi-part videos (分P), and collections (合集) from Bilibili, plus import videos, favlists, collections, and series.',
   badgeLabel: 'Bilibili',
-  updateUrl: 'https://github.com/SEANPNEX/musico_plugins/releases/download/bilibili-search-v1.0.0/bilibili-search.musicoext',
+  updateUrl: 'https://github.com/SEANPNEX/musico_plugins/releases/download/bilibili-search-v1.1.0/bilibili-search.musicoext',
   capabilities: ['search', 'playlist', 'stream', 'cookie', 'proxy'],
   searchKinds: ['track', 'playlist'],
+  qualities: [
+    { id: 'highest', label: 'Hi-Res / 192k', badge: 'FLAC', lossless: true },
+    { id: 'high', label: 'High (192k)', badge: '192k' },
+    { id: 'standard', label: 'Standard (132k)', badge: '132k' },
+    { id: 'low', label: 'Low (64k)', badge: '64k' }
+  ],
+  defaultStreamQuality: 'standard',
+  defaultDownloadQuality: 'highest',
   urlPatterns: [
     '^https?://(www\\.|m\\.|space\\.)?bilibili\\.com/',
     '^https?://b23\\.tv/[A-Za-z0-9]+'
@@ -1468,7 +1476,44 @@ function parseStreamTrackId(rawId) {
   return null;
 }
 
-function extractBiliStreamCandidate(playJson) {
+var BILI_QUALITY_ORDER = {
+  highest: [30251, 30280, 30232, 30216],
+  high: [30280, 30232, 30216, 30251],
+  standard: [30232, 30280, 30216, 30251],
+  low: [30216, 30232, 30280, 30251]
+};
+
+function resolveBiliRequestedQuality(req) {
+  var raw = req && req.quality ? String(req.quality).trim().toLowerCase() : '';
+  if (raw && Object.prototype.hasOwnProperty.call(BILI_QUALITY_ORDER, raw)) {
+    return raw;
+  }
+  var purpose = req && req.purpose ? String(req.purpose).trim().toLowerCase() : '';
+  return purpose === 'download' ? 'highest' : 'standard';
+}
+
+function biliQualityMeta(sid, isFlac, bandwidth) {
+  var bwKbps = (typeof bandwidth === 'number' && isFinite(bandwidth) && bandwidth > 0)
+    ? Math.max(1, Math.round(bandwidth / 1000))
+    : 0;
+  if (sid === 30251 || isFlac) {
+    return { actualQuality: 'highest', qualityLabel: 'FLAC', bitrateKbps: bwKbps || 1411 };
+  }
+  if (sid === 30280) {
+    return { actualQuality: 'high', qualityLabel: '192k', bitrateKbps: bwKbps || 192 };
+  }
+  if (sid === 30232) {
+    return { actualQuality: 'standard', qualityLabel: '132k', bitrateKbps: bwKbps || 132 };
+  }
+  if (sid === 30216) {
+    return { actualQuality: 'low', qualityLabel: '64k', bitrateKbps: bwKbps || 64 };
+  }
+  var kbps = bwKbps || 128;
+  var aq = kbps >= 250 ? 'highest' : (kbps >= 160 ? 'high' : (kbps >= 96 ? 'standard' : 'low'));
+  return { actualQuality: aq, qualityLabel: String(kbps) + 'k', bitrateKbps: kbps };
+}
+
+function extractBiliStreamCandidate(playJson, requestedQuality) {
   var data = playJson && playJson.data;
   if (!data) return null;
 
@@ -1477,7 +1522,7 @@ function extractBiliStreamCandidate(playJson) {
     if (data.dash.flac && data.dash.flac.audio) {
       streams.push(data.dash.flac.audio);
     }
-    var preferredIds = [30280, 30232, 30216, 30251];
+    var preferredIds = BILI_QUALITY_ORDER[requestedQuality] || BILI_QUALITY_ORDER.standard;
     streams.sort(function (a, b) {
       var idA = typeof (a && a.id) === 'number' ? a.id : 0;
       var idB = typeof (b && b.id) === 'number' ? b.id : 0;
@@ -1506,11 +1551,15 @@ function extractBiliStreamCandidate(playJson) {
       var sid = typeof s.id === 'number' ? s.id : 0;
       var mime = String(s.mimeType || s.mime_type || '').toLowerCase();
       var isFlac = sid === 30251 || mime.indexOf('flac') >= 0;
+      var qMeta = biliQualityMeta(sid, isFlac, Number(s.bandwidth || 0));
       return {
         url: primary,
         fallbackUrls: backups,
         fileExtension: isFlac ? 'flac' : 'm4a',
-        mimeType: isFlac ? 'audio/flac' : 'audio/mp4'
+        mimeType: isFlac ? 'audio/flac' : 'audio/mp4',
+        actualQuality: qMeta.actualQuality,
+        qualityLabel: qMeta.qualityLabel,
+        bitrateKbps: qMeta.bitrateKbps
       };
     }
   }
@@ -1533,7 +1582,10 @@ function extractBiliStreamCandidate(playJson) {
           url: dPrimary,
           fallbackUrls: dBackups,
           fileExtension: 'mp4',
-          mimeType: 'video/mp4'
+          mimeType: 'video/mp4',
+          actualQuality: 'standard',
+          qualityLabel: 'MP4',
+          bitrateKbps: 128
         };
       }
     }
@@ -1553,7 +1605,7 @@ function extractBiliExpireMs(urlStr) {
   return Date.now() + 5400 * 1000;
 }
 
-async function resolveBiliStream(ctx, target, rawCookie) {
+async function resolveBiliStream(ctx, target, rawCookie, requestedQuality) {
   var effectiveCookie = await resolveBiliCookie(ctx, rawCookie);
   var bvid = target.bvid;
   var aid = target.aid;
@@ -1587,7 +1639,7 @@ async function resolveBiliStream(ctx, target, rawCookie) {
     bvid: bvid,
     cid: String(cid),
     qn: '80',
-    fnval: '16',
+    fnval: '4048',
     fnver: '0',
     fourk: '1'
   };
@@ -1605,7 +1657,7 @@ async function resolveBiliStream(ctx, target, rawCookie) {
       'https://www.bilibili.com/video/' + bvid,
       'https://www.bilibili.com'
     );
-    candidate = extractBiliStreamCandidate(playJson);
+    candidate = extractBiliStreamCandidate(playJson, requestedQuality);
   } catch (err) {
     wbiErr = err;
     kvRemoveSafe(ctx, WBI_KEY_KV_KEY);
@@ -1621,7 +1673,7 @@ async function resolveBiliStream(ctx, target, rawCookie) {
         'https://www.bilibili.com/video/' + bvid,
         'https://www.bilibili.com'
       );
-      candidate = extractBiliStreamCandidate(playJson);
+      candidate = extractBiliStreamCandidate(playJson, requestedQuality);
     } catch (fbErr) {
       throw wbiErr || fbErr;
     }
@@ -1642,7 +1694,10 @@ async function resolveBiliStream(ctx, target, rawCookie) {
     fileExtension: candidate.fileExtension,
     mimeType: candidate.mimeType,
     expiresAtMs: extractBiliExpireMs(candidate.url),
-    fallbackUrls: candidate.fallbackUrls
+    fallbackUrls: candidate.fallbackUrls,
+    actualQuality: candidate.actualQuality,
+    qualityLabel: candidate.qualityLabel,
+    bitrateKbps: candidate.bitrateKbps
   };
 }
 
@@ -1653,7 +1708,8 @@ async function resolveStream(ctx, req) {
     throw extError('NO_PLAYABLE_STREAM', 'Unrecognized Bilibili track ID: ' + String(rawTrackId));
   }
   var biliCookie = req && req.cookie ? String(req.cookie).trim() : null;
-  return await resolveBiliStream(ctx, parsed, biliCookie);
+  var requestedQuality = resolveBiliRequestedQuality(req);
+  return await resolveBiliStream(ctx, parsed, biliCookie, requestedQuality);
 }
 
 module.exports = {

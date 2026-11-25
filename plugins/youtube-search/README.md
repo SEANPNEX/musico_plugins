@@ -12,6 +12,18 @@ Single-file Musico API v1 extension providing **YouTube / YouTube Music** cloud 
 - **Cross-Platform Stream Resolution (`resolveStream`)**:
   - Multi-client Innertube fallback (`VISIONOS`, `ANDROID`, `IOS`, `ANDROID_VR`, `WEB_EMBEDDED_PLAYER`) with `visitorData` caching and bounded range probes (`bytes=0-1023`, `bytes=1048576-1049599`).
   - Enforces **MP4/AAC-only** formats on Apple (`ios` / `macos`), while honoring `youtubeAudioFormat` (`auto`, `m4a`, `opus`) on Android & Windows.
+  - Honors `req.quality` (`highest`, `high`, `standard`, `low`) and `req.purpose` (`"download"` -> `highest`, `"stream"` -> `standard`), returning `actualQuality`, `qualityLabel`, and `bitrateKbps`.
+
+## Audio Qualities
+
+Defaults: `defaultStreamQuality: "standard"`, `defaultDownloadQuality: "highest"`.
+
+| ID | Label | Badge | Format Preference |
+|---|---|---|---|
+| `highest` | Best Available | `Best` | `141` (256k M4A) / `251` (160k Opus) |
+| `high` | High | `High` | `140` / `251` |
+| `standard` | Standard | `Std` | `140` (128k M4A) / `250` (70k Opus) |
+| `low` | Low (Data Saver) | `Low` | `139` (48k M4A) / `249` (50k Opus) |
 
 ## Settings
 

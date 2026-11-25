@@ -11,6 +11,14 @@ var manifest = {
   updateUrl: 'https://github.com/SEANPNEX/musico_plugins/releases/download/apple-music-v1.0.0/apple-music.musicoext',
   capabilities: ['search', 'playlist', 'stream', 'lyrics', 'cookie', 'proxy'],
   searchKinds: ['track', 'playlist', 'album'],
+  qualities: [
+    { id: 'aac-he-web', label: 'HE-AAC', badge: 'HE-AAC' },
+    { id: 'aac-web', label: 'AAC 256k', badge: '256k' },
+    { id: 'alac', label: 'ALAC Lossless', badge: 'ALAC', lossless: true },
+    { id: 'atmos', label: 'Dolby Atmos', badge: 'Atmos' }
+  ],
+  defaultStreamQuality: 'aac-web',
+  defaultDownloadQuality: 'aac-web',
   urlPatterns: [
     '^https?://(?:beta\\.|classical\\.)?music\\.apple\\.com/'
   ],
@@ -47,6 +55,13 @@ var ALLOWED_CODECS = {
   'aac-he-web': true,
   alac: true,
   atmos: true
+};
+
+var CODEC_QUALITY_META = {
+  'aac-he-web': { label: 'HE-AAC', kbps: 64 },
+  'aac-web': { label: '256k', kbps: 256 },
+  alac: { label: 'ALAC', kbps: 1411 },
+  atmos: { label: 'Atmos', kbps: 768 }
 };
 
 function extError(code, message) {
@@ -352,13 +367,22 @@ async function fetchCollection(ctx, req) {
   };
 }
 
+function resolveCodec(ctx, req) {
+  var reqQuality = req && req.quality ? String(req.quality).trim().toLowerCase() : '';
+  if (reqQuality && ALLOWED_CODECS[reqQuality]) {
+    return reqQuality;
+  }
+  return getCodec(ctx);
+}
+
 async function resolveStream(ctx, req) {
   var baseUrl = getServerUrl(ctx);
   var trackId = String((req && req.remoteTrackId) || '').trim();
   if (!trackId) {
     throw extError('NO_PLAYABLE_STREAM', 'Missing Apple Music track ID.');
   }
-  var codec = getCodec(ctx);
+  var codec = resolveCodec(ctx, req);
+  var qMeta = CODEC_QUALITY_META[codec] || CODEC_QUALITY_META['aac-web'];
   var headers = {};
   var cleanCookie = req && req.cookie ? String(req.cookie).trim() : '';
   if (cleanCookie) {
@@ -375,7 +399,10 @@ async function resolveStream(ctx, req) {
     headers: headers,
     fileExtension: 'm4a',
     mimeType: 'audio/mp4',
-    expiresAtMs: Date.now() + 3600 * 1000
+    expiresAtMs: Date.now() + 3600 * 1000,
+    actualQuality: codec,
+    qualityLabel: qMeta.label,
+    bitrateKbps: qMeta.kbps
   };
 }
 

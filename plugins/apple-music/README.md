@@ -11,6 +11,19 @@ Search songs, albums, and playlists, import Apple Music URLs, stream audio, and 
 
 If your companion server requires a Bearer token (`AM_SERVER_API_TOKEN`), paste the token into the extension's **Cookie** field in Musico Extension Manager.
 
+## Audio Qualities
+
+Defaults: `defaultStreamQuality: "aac-web"`, `defaultDownloadQuality: "aac-web"`.
+
+`resolveStream` honors `req.quality` before `ctx.settings.get('codec')` (supporting `req.purpose: "stream" | "download"`) and returns `actualQuality`, `qualityLabel`, and `bitrateKbps`.
+
+| ID | Label | Badge | Lossless |
+|---|---|---|---|
+| `aac-he-web` | HE-AAC | `HE-AAC` | — |
+| `aac-web` | AAC 256k | `256k` | — |
+| `alac` | ALAC Lossless | `ALAC` | `true` |
+| `atmos` | Dolby Atmos | `Atmos` | — |
+
 ## Companion Server API Contract
 
 Any server exposing these 4 endpoints works with this extension:

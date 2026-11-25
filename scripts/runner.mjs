@@ -9,7 +9,7 @@
  *   node scripts/runner.mjs <path-to-bundle-or-.musico.js> can-handle <url>
  *   node scripts/runner.mjs <path-to-bundle-or-.musico.js> fetch-collection <url> [--cookie "..."] [--cursor "..."] [--setting k=v] [--platform macos] [--compat]
  *   node scripts/runner.mjs <path-to-bundle-or-.musico.js> fetch-folder <folderId> [--path a/b] [--depth 1] [--cursor "..."]
- *   node scripts/runner.mjs <path-to-bundle-or-.musico.js> resolve-stream <remoteTrackId> [--cookie "..."] [--force] [--setting k=v] [--platform macos]
+ *   node scripts/runner.mjs <path-to-bundle-or-.musico.js> resolve-stream <remoteTrackId> [--cookie "..."] [--force] [--quality <id>] [--purpose stream|download] [--setting k=v] [--platform macos]
  *   node scripts/runner.mjs <path-to-bundle-or-.musico.js> search <query> [--kind all|track|playlist|album] [--limit 20] [--cursor "..."] [--cookie "..."] [--setting k=v]
  *   node scripts/runner.mjs <path-to-bundle-or-.musico.js> search-lyrics <title> [--artist "..."] [--album "..."] [--duration 213] [--setting k=v]
  *   node scripts/runner.mjs <path-to-bundle-or-.musico.js> start-qr-login [--setting k=v]
@@ -30,6 +30,7 @@ export const VALID_CAPABILITIES = new Set(['playlist', 'tree', 'stream', 'cookie
 export const VALID_SEARCH_KINDS = new Set(['track', 'playlist', 'album']);
 export const VALID_SETTING_TYPES = new Set(['boolean', 'string', 'select', 'server_url']);
 export const VALID_PLATFORMS = new Set(['ios', 'macos', 'android', 'windows']);
+export const VALID_STREAM_PURPOSES = new Set(['stream', 'download']);
 export const VALID_QR_LOGIN_STATUSES = new Set(['pending', 'scanned', 'confirmed', 'expired', 'error']);
 
 export const FORBIDDEN_PORTABILITY_GLOBALS = Object.freeze([
@@ -223,6 +224,53 @@ export function validateManifest(manifest) {
           }
         }
       }
+    }
+  }
+
+  let seenQualityIds = null;
+  if (manifest.qualities !== undefined) {
+    assert.ok(Array.isArray(manifest.qualities), 'manifest.qualities must be an array');
+    assert.ok(manifest.qualities.length <= 16, 'manifest.qualities must contain at most 16 entries');
+    seenQualityIds = new Set();
+    for (const q of manifest.qualities) {
+      assert.ok(q && typeof q === 'object' && !Array.isArray(q), 'Each quality entry must be an object');
+      const qid = typeof q.id === 'string' ? q.id.trim() : '';
+      assert.ok(qid.length > 0, 'Quality id must be a non-empty string');
+      assert.ok(!seenQualityIds.has(qid), `Duplicate quality id: ${qid}`);
+      seenQualityIds.add(qid);
+      assert.ok(typeof q.label === 'string' && q.label.trim().length > 0, `Quality ${qid} requires a non-empty label`);
+      if (q.badge !== undefined && q.badge !== null) {
+        assert.ok(typeof q.badge === 'string', `Quality ${qid} badge must be a string`);
+      }
+      if (q.lossless !== undefined && q.lossless !== null) {
+        assert.ok(typeof q.lossless === 'boolean', `Quality ${qid} lossless must be a boolean`);
+      }
+    }
+  }
+
+  if (manifest.defaultStreamQuality !== undefined && manifest.defaultStreamQuality !== null) {
+    assert.ok(
+      typeof manifest.defaultStreamQuality === 'string' && manifest.defaultStreamQuality.trim().length > 0,
+      'manifest.defaultStreamQuality must be a non-empty string'
+    );
+    if (seenQualityIds !== null) {
+      assert.ok(
+        seenQualityIds.has(manifest.defaultStreamQuality.trim()),
+        `manifest.defaultStreamQuality "${manifest.defaultStreamQuality}" must reference an id in manifest.qualities`
+      );
+    }
+  }
+
+  if (manifest.defaultDownloadQuality !== undefined && manifest.defaultDownloadQuality !== null) {
+    assert.ok(
+      typeof manifest.defaultDownloadQuality === 'string' && manifest.defaultDownloadQuality.trim().length > 0,
+      'manifest.defaultDownloadQuality must be a non-empty string'
+    );
+    if (seenQualityIds !== null) {
+      assert.ok(
+        seenQualityIds.has(manifest.defaultDownloadQuality.trim()),
+        `manifest.defaultDownloadQuality "${manifest.defaultDownloadQuality}" must reference an id in manifest.qualities`
+      );
     }
   }
 
@@ -656,6 +704,9 @@ export function runConformance(targetPath, opts = {}) {
     name: ext.manifest.name,
     version: ext.manifest.version,
     updateUrl: ext.manifest.updateUrl || null,
+    qualities: ext.manifest.qualities || null,
+    defaultStreamQuality: ext.manifest.defaultStreamQuality || null,
+    defaultDownloadQuality: ext.manifest.defaultDownloadQuality || null,
     capabilities: ext.manifest.capabilities,
     hosts: ext.manifest.permissions.hosts,
     strictPortabilityPassed: strict,
@@ -906,11 +957,43 @@ export async function runFetchFolder(ext, bridge, req, timeoutMs = 60000) {
 
 export async function runResolveStream(ext, bridge, req, timeoutMs = 15000) {
   assert.equal(typeof ext.exportsObj.resolveStream, 'function', 'Extension must export resolveStream(ctx, req)');
-  const result = await invokeWithTimeout(() => ext.exportsObj.resolveStream(bridge.ctx, req), timeoutMs);
+  const payload = {
+    remoteTrackId: req?.remoteTrackId != null ? String(req.remoteTrackId) : '',
+    ...(req?.relativePath != null ? { relativePath: String(req.relativePath) } : {}),
+    ...(req?.cookie != null ? { cookie: String(req.cookie) } : {}),
+    forceRefresh: Boolean(req?.forceRefresh)
+  };
+  if (req?.quality !== undefined && req?.quality !== null && String(req.quality).trim() !== '') {
+    payload.quality = String(req.quality).trim();
+  }
+  if (req?.purpose !== undefined && req?.purpose !== null && String(req.purpose).trim() !== '') {
+    const purpose = String(req.purpose).trim().toLowerCase();
+    assert.ok(VALID_STREAM_PURPOSES.has(purpose), `Invalid resolveStream purpose: ${req.purpose}`);
+    payload.purpose = purpose;
+  }
+  const result = await invokeWithTimeout(() => ext.exportsObj.resolveStream(bridge.ctx, payload), timeoutMs);
   assert.ok(result && typeof result === 'object', 'resolveStream() must return an object');
   bridge.assertAllowedUrl(result.url);
   for (const fb of result.fallbackUrls || []) {
     bridge.assertAllowedUrl(fb);
+  }
+  if (result.actualQuality !== undefined && result.actualQuality !== null) {
+    assert.ok(
+      typeof result.actualQuality === 'string' && result.actualQuality.trim().length > 0,
+      'resolveStream() actualQuality must be a non-empty string'
+    );
+  }
+  if (result.qualityLabel !== undefined && result.qualityLabel !== null) {
+    assert.ok(
+      typeof result.qualityLabel === 'string' && result.qualityLabel.trim().length > 0,
+      'resolveStream() qualityLabel must be a non-empty string'
+    );
+  }
+  if (result.bitrateKbps !== undefined && result.bitrateKbps !== null) {
+    assert.ok(
+      typeof result.bitrateKbps === 'number' && Number.isFinite(result.bitrateKbps) && result.bitrateKbps > 0,
+      'resolveStream() bitrateKbps must be a positive finite number'
+    );
   }
   return result;
 }
@@ -1079,6 +1162,63 @@ export async function runSelfTest() {
     }), /updateUrl/, `Expected invalid updateUrl to fail: ${String(badUpdateUrl)}`);
   }
 
+  // Validate optional manifest.qualities, defaultStreamQuality, defaultDownloadQuality
+  validateManifest({
+    apiVersion: 1,
+    id: 'com.example.valid.qualities',
+    name: 'Valid Qualities',
+    version: '1.0.0',
+    capabilities: ['stream'],
+    qualities: [
+      { id: 'highest', label: 'Best', badge: 'FLAC', lossless: true },
+      { id: 'standard', label: 'Standard', badge: 'Std' }
+    ],
+    defaultStreamQuality: 'standard',
+    defaultDownloadQuality: 'highest',
+    permissions: { hosts: ['example.com'] }
+  });
+  assert.throws(() => validateManifest({
+    apiVersion: 1,
+    id: 'com.example.invalid.qualities.dup',
+    name: 'Dup Qualities',
+    version: '1.0.0',
+    capabilities: ['stream'],
+    qualities: [
+      { id: 'standard', label: 'Standard' },
+      { id: 'standard', label: 'Duplicate' }
+    ],
+    permissions: { hosts: ['example.com'] }
+  }), /Duplicate quality id/);
+  assert.throws(() => validateManifest({
+    apiVersion: 1,
+    id: 'com.example.invalid.qualities.max',
+    name: 'Too Many Qualities',
+    version: '1.0.0',
+    capabilities: ['stream'],
+    qualities: Array.from({ length: 17 }, (_, i) => ({ id: `q${i}`, label: `Q${i}` })),
+    permissions: { hosts: ['example.com'] }
+  }), /at most 16/);
+  assert.throws(() => validateManifest({
+    apiVersion: 1,
+    id: 'com.example.invalid.qualities.default',
+    name: 'Bad Default Quality',
+    version: '1.0.0',
+    capabilities: ['stream'],
+    qualities: [{ id: 'standard', label: 'Standard' }],
+    defaultStreamQuality: 'missing-id',
+    permissions: { hosts: ['example.com'] }
+  }), /defaultStreamQuality/);
+  assert.throws(() => validateManifest({
+    apiVersion: 1,
+    id: 'com.example.invalid.qualities.dl',
+    name: 'Bad Default Download Quality',
+    version: '1.0.0',
+    capabilities: ['stream'],
+    qualities: [{ id: 'standard', label: 'Standard' }],
+    defaultDownloadQuality: 'missing-id',
+    permissions: { hosts: ['example.com'] }
+  }), /defaultDownloadQuality/);
+
   // 3. Verify strict VM omits every forbidden global at runtime
   for (const sym of FORBIDDEN_PORTABILITY_GLOBALS) {
     const probeSource = `
@@ -1182,11 +1322,26 @@ export async function runSelfTest() {
       resolveStream: async (_ctx, req) => ({
         url: req.remoteTrackId === 'bad' ? 'https://evil.example.com/a.mp3' : 'https://edge1.cdn.fixture.test/a.mp3',
         fallbackUrls: req.remoteTrackId === 'bad-fb' ? ['https://evil.example.com/b.mp3'] : ['https://edge2.cdn.fixture.test/b.mp3'],
-        fileExtension: 'mp3'
+        fileExtension: 'mp3',
+        actualQuality: req.quality || (req.purpose === 'download' ? 'highest' : 'standard'),
+        qualityLabel: req.quality === 'highest' ? '320k' : '128k',
+        bitrateKbps: req.quality === 'highest' ? 320 : 128
       })
     }
   };
-  await runResolveStream(mockExt, bridge, { remoteTrackId: 'ok', forceRefresh: false });
+  const qStreamRes = await runResolveStream(mockExt, bridge, {
+    remoteTrackId: 'ok',
+    forceRefresh: false,
+    quality: 'highest',
+    purpose: 'download'
+  });
+  assert.equal(qStreamRes.actualQuality, 'highest');
+  assert.equal(qStreamRes.qualityLabel, '320k');
+  assert.equal(qStreamRes.bitrateKbps, 320);
+  await assert.rejects(
+    () => runResolveStream(mockExt, bridge, { remoteTrackId: 'ok', purpose: 'invalid-purpose' }),
+    /Invalid resolveStream purpose/
+  );
   await assert.rejects(
     () => runResolveStream(mockExt, bridge, { remoteTrackId: 'bad', forceRefresh: false }),
     (err) => err.code === 'PERMISSION_DENIED'
@@ -1317,6 +1472,9 @@ async function main() {
       version: summary.version,
       capabilities: summary.capabilities,
       hosts: summary.hosts,
+      qualities: summary.qualities,
+      defaultStreamQuality: summary.defaultStreamQuality,
+      defaultDownloadQuality: summary.defaultDownloadQuality,
       strictPortabilityPassed: summary.strictPortabilityPassed
     }, null, 2));
     return;
@@ -1339,6 +1497,8 @@ async function main() {
   let depth = 1;
   let pathSegments = [];
   let forceRefresh = false;
+  let quality = null;
+  let purpose = null;
   let kind = 'all';
   let limit = 20;
   let artist = '';
@@ -1354,6 +1514,8 @@ async function main() {
     else if (flag === '--depth' && rest[i + 1]) depth = Number(rest[++i]);
     else if (flag === '--path' && rest[i + 1]) pathSegments = rest[++i].split('/').filter(Boolean);
     else if (flag === '--force') forceRefresh = true;
+    else if (flag === '--quality' && rest[i + 1]) quality = rest[++i];
+    else if (flag === '--purpose' && rest[i + 1]) purpose = rest[++i];
     else if (flag === '--kind' && rest[i + 1]) kind = rest[++i];
     else if (flag === '--limit' && rest[i + 1]) limit = Number(rest[++i]);
     else if (flag === '--artist' && rest[i + 1]) artist = rest[++i];
@@ -1381,7 +1543,7 @@ async function main() {
   } else if (command === 'fetch-folder') {
     output = await runFetchFolder(ext, bridge, { folderId: target, pathSegments, depth, cookie, cursor }, 60000);
   } else if (command === 'resolve-stream') {
-    output = await runResolveStream(ext, bridge, { remoteTrackId: target, cookie, forceRefresh }, 15000);
+    output = await runResolveStream(ext, bridge, { remoteTrackId: target, cookie, forceRefresh, quality, purpose }, 15000);
   } else if (command === 'search') {
     output = await runSearch(ext, bridge, { query: target, kind, limit, cursor, cookie }, 15000);
   } else if (command === 'search-lyrics') {

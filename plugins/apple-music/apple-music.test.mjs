@@ -61,6 +61,14 @@ test('portability & manifest contract for apple-music', () => {
   );
   assert.deepEqual(m.capabilities, ['search', 'playlist', 'stream', 'lyrics', 'cookie', 'proxy']);
   assert.deepEqual(m.searchKinds, ['track', 'playlist', 'album']);
+  assert.deepEqual(m.qualities, [
+    { id: 'aac-he-web', label: 'HE-AAC', badge: 'HE-AAC' },
+    { id: 'aac-web', label: 'AAC 256k', badge: '256k' },
+    { id: 'alac', label: 'ALAC Lossless', badge: 'ALAC', lossless: true },
+    { id: 'atmos', label: 'Dolby Atmos', badge: 'Atmos' }
+  ]);
+  assert.equal(m.defaultStreamQuality, 'aac-web');
+  assert.equal(m.defaultDownloadQuality, 'aac-web');
   for (const h of m.permissions.hosts) {
     validateHostPattern(h);
   }
@@ -187,7 +195,7 @@ test('fetchCollection resolves tracks and rejects empty collections', async () =
   );
 });
 
-test('resolveStream returns stream URL with zero HTTP calls and respects codec + auth', async () => {
+test('resolveStream returns stream URL with zero HTTP calls and honors req.quality before codec + auth', async () => {
   const { ext, bridge, requests } = createMock({
     settings: { serverUrl: 'https://am.local.test:8787/', codec: 'alac' },
     httpHandler: async () => {
@@ -195,7 +203,8 @@ test('resolveStream returns stream URL with zero HTTP calls and respects codec +
     }
   });
 
-  const stream = await runResolveStream(ext, bridge, {
+  // Falls back to ctx.settings.get('codec') when req.quality is omitted
+  const streamFromSetting = await runResolveStream(ext, bridge, {
     remoteTrackId: '1680778943',
     cookie: 'Bearer tok-123',
     forceRefresh: true
@@ -203,12 +212,36 @@ test('resolveStream returns stream URL with zero HTTP calls and respects codec +
 
   assert.equal(requests.length, 0);
   assert.equal(
-    stream.url,
+    streamFromSetting.url,
     'https://am.local.test:8787/v1/tracks/1680778943/stream?codec=alac&refresh=1'
   );
-  assert.equal(stream.headers.Authorization, 'Bearer tok-123');
-  assert.equal(stream.fileExtension, 'm4a');
-  assert.equal(stream.mimeType, 'audio/mp4');
+  assert.equal(streamFromSetting.headers.Authorization, 'Bearer tok-123');
+  assert.equal(streamFromSetting.fileExtension, 'm4a');
+  assert.equal(streamFromSetting.mimeType, 'audio/mp4');
+  assert.equal(streamFromSetting.actualQuality, 'alac');
+  assert.equal(streamFromSetting.qualityLabel, 'ALAC');
+  assert.equal(streamFromSetting.bitrateKbps, 1411);
+
+  // req.quality overrides ctx.settings.get('codec')
+  const expectedQualities = [
+    ['aac-he-web', 'HE-AAC', 64, 'stream'],
+    ['aac-web', '256k', 256, 'download'],
+    ['atmos', 'Atmos', 768, 'stream']
+  ];
+  for (const [qualityId, label, kbps, purpose] of expectedQualities) {
+    const res = await runResolveStream(ext, bridge, {
+      remoteTrackId: '1680778943',
+      quality: qualityId,
+      purpose
+    });
+    assert.equal(
+      res.url,
+      `https://am.local.test:8787/v1/tracks/1680778943/stream?codec=${qualityId}`
+    );
+    assert.equal(res.actualQuality, qualityId);
+    assert.equal(res.qualityLabel, label);
+    assert.equal(res.bitrateKbps, kbps);
+  }
 });
 
 test('searchLyrics fetches candidates and treats 404 as empty list', async () => {

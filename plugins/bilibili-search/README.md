@@ -13,7 +13,19 @@ Single-file Musico API v1 extension providing **Bilibili** cloud search (songs, 
 - **Collection Import (`canHandle` + `fetchCollection`)**:
   - Single & multi-part videos (`BV...` / `av...`), favlists (`fid` / `media_id` / `ml...`), space collections (`season_id`), series (`series_id`), and `b23.tv` short links.
 - **Stream Resolution (`resolveStream`)**:
-  - WBI-signed `playurl` (with unsigned fallback), DASH audio quality priority (`30280 > 30232 > 30216 > 30251`, including Hi-Res FLAC), and `durl` fallback.
+  - WBI-signed `playurl` (with unsigned fallback), DASH audio quality selection across `30251` (Hi-Res FLAC), `30280` (192k), `30232` (132k), and `30216` (64k), and `durl` fallback.
+  - Honors `req.quality` and `req.purpose` (`"download"` -> `highest`, `"stream"` -> `standard`), returning `actualQuality`, `qualityLabel`, and `bitrateKbps`.
+
+## Audio Qualities
+
+Defaults: `defaultStreamQuality: "standard"`, `defaultDownloadQuality: "highest"`.
+
+| ID | Label | Badge | Lossless | Stream Priority |
+|---|---|---|---|---|
+| `highest` | Hi-Res / 192k | `FLAC` | `true` | `30251` → `30280` → `30232` → `30216` |
+| `high` | High (192k) | `192k` | — | `30280` → `30232` → `30216` → `30251` |
+| `standard` | Standard (132k) | `132k` | — | `30232` → `30280` → `30216` → `30251` |
+| `low` | Low (64k) | `64k` | — | `30216` → `30232` → `30280` → `30251` |
 
 ## Settings
 

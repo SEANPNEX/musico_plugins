@@ -18,7 +18,14 @@ Single-file Musico API v1 extension for **NetEase Cloud Music** (`music.163.com`
 - **Stream Resolution (`resolveStream`)**
   - Pure portable JS AES-128-ECB + EAPI signing/decryption (zero Node/DOM globals; compatible with Apple JavaScriptCore, Android QuickJS, and Windows Jint)
   - Primary `/eapi/song/enhance/player/url/v1` with automatic quality fallback and legacy `/eapi/song/enhance/player/url` fallback
+  - Honors `req.quality` first, falling back to `ctx.settings.get('quality')` or `req.purpose` (`"download"` -> `highest`, `"stream"` -> `standard`), and returns `actualQuality`, `qualityLabel`, and `bitrateKbps`
   - Upgrades returned `http://` CDN stream URLs to `https://` when TLS succeeds, falling back cleanly if a CDN edge only serves HTTP
+
+## Audio Qualities
+
+Defaults: `defaultStreamQuality: "standard"`, `defaultDownloadQuality: "highest"`.
+
+`qualities` exposes `highest` (`Highest Available`, badge `Hi-Res`, `lossless: true` — cascades `jymaster -> hires -> lossless -> exhigh -> standard`) plus `jymaster`, `sky`, `jyeffect`, `hires`, `lossless`, `exhigh`, `higher`, and `standard`.
 
 ## Settings
 
@@ -48,7 +55,7 @@ node /Users/sean/workspace/musicplayer/docs/extensions/tools/mock-runner.mjs plu
 
 ## QR Code Login & Auto-Update
 
-`netease-cloud.musico.js` (`v1.1.1`) declares `"qr_login"` (`startQrLogin(ctx)` / `pollQrLogin(ctx, req)`) and includes an HTTPS `updateUrl` in its manifest:
+`netease-cloud.musico.js` (`v1.2.0`) declares `"qr_login"` (`startQrLogin(ctx)` / `pollQrLogin(ctx, req)`) and includes an HTTPS `updateUrl` in its manifest:
 
 - Open the extension card in Musico (**Sign In with QR Code**) and scan with the NetEase Cloud Music mobile app.
 - On confirmation (`803`), Musico automatically extracts and saves your private session cookie (`MUSIC_U` / `__csrf`) without logging secrets.

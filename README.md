@@ -8,9 +8,9 @@ Licensed under the [MIT License](LICENSE).
 
 | Plugin | ID | Version | Capabilities | Search Kinds | Entry File | Docs |
 |---|---|---|---|---|---|---|
-| **YouTube Search** | `youtube-search` | `1.0.0` | `search`, `playlist`, `stream`, `cookie`, `proxy` | `track`, `playlist`, `album` | [`plugins/youtube-search/youtube-search.musico.js`](plugins/youtube-search/youtube-search.musico.js) | [`plugins/youtube-search/README.md`](plugins/youtube-search/README.md) |
-| **Bilibili Search** | `bilibili-search` | `1.0.0` | `search`, `playlist`, `stream`, `cookie`, `proxy` | `track`, `playlist` | [`plugins/bilibili-search/bilibili-search.musico.js`](plugins/bilibili-search/bilibili-search.musico.js) | [`plugins/bilibili-search/README.md`](plugins/bilibili-search/README.md) |
-| **NetEase Cloud Music** | `com.seanpnex.musico.netease` | `1.1.1` | `playlist`, `stream`, `search`, `cookie`, `qr_login`, `proxy` | `track`, `playlist`, `album` | [`plugins/netease-cloud/netease-cloud.musico.js`](plugins/netease-cloud/netease-cloud.musico.js) | [`plugins/netease-cloud/README.md`](plugins/netease-cloud/README.md) |
+| **YouTube Search** | `youtube-search` | `1.1.0` | `search`, `playlist`, `stream`, `cookie`, `proxy` | `track`, `playlist`, `album` | [`plugins/youtube-search/youtube-search.musico.js`](plugins/youtube-search/youtube-search.musico.js) | [`plugins/youtube-search/README.md`](plugins/youtube-search/README.md) |
+| **Bilibili Search** | `bilibili-search` | `1.1.0` | `search`, `playlist`, `stream`, `cookie`, `proxy` | `track`, `playlist` | [`plugins/bilibili-search/bilibili-search.musico.js`](plugins/bilibili-search/bilibili-search.musico.js) | [`plugins/bilibili-search/README.md`](plugins/bilibili-search/README.md) |
+| **NetEase Cloud Music** | `com.seanpnex.musico.netease` | `1.2.0` | `playlist`, `stream`, `search`, `cookie`, `qr_login`, `proxy` | `track`, `playlist`, `album` | [`plugins/netease-cloud/netease-cloud.musico.js`](plugins/netease-cloud/netease-cloud.musico.js) | [`plugins/netease-cloud/README.md`](plugins/netease-cloud/README.md) |
 | **Apple Music** | `com.seanpnex.musico.applemusic` | `1.0.0` | `search`, `playlist`, `stream`, `lyrics`, `cookie`, `proxy` | `track`, `playlist`, `album` | [`plugins/apple-music/apple-music.musico.js`](plugins/apple-music/apple-music.musico.js) | [`plugins/apple-music/README.md`](plugins/apple-music/README.md) |
 
 ## Installing in Musico
@@ -27,8 +27,9 @@ After enabling:
 
 ## Cookies & Settings
 
-- **Extension Cookie:** All three plugins declare `"cookie"` and provide a masked **Extension Cookie** field inside the extension's detail screen in Musico. This cookie is sent to `search`, ephemeral search previews, and ephemeral stream playback.
+- **Extension Cookie:** All four plugins declare `"cookie"` and provide a masked **Extension Cookie** field inside the extension's detail screen in Musico. This cookie is sent to `search`, ephemeral search previews, and ephemeral stream playback.
 - **Per-Folder Cookie Isolation:** Mounted cloud folders maintain their own per-folder cookie, which takes precedence over the extension-level cookie.
+- **Audio Quality Selection (`qualities`):** All four plugins declare `qualities`, `defaultStreamQuality`, and `defaultDownloadQuality` in their manifest, honor `req.quality` and `req.purpose` (`"stream"` / `"download"`) in `resolveStream`, and return `actualQuality`, `qualityLabel`, and `bitrateKbps`.
 - **YouTube Search settings:**
   - `youtubeMode` (`music` / `youtube`): Search YouTube Music (`WEB_REMIX`) or YouTube Main (`WEB`).
   - `youtubeAudioFormat` (`auto` / `m4a` / `opus`): Audio container preference (`auto` forces M4A/AAC on iOS/macOS and prefers Opus/M4A on Android/Windows).

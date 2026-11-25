@@ -4,13 +4,21 @@ var manifest = {
   apiVersion: 1,
   id: 'youtube-search',
   name: 'YouTube Search',
-  version: '1.0.0',
+  version: '1.1.0',
   author: 'SEANPNEX',
   description: 'Search songs, albums, and playlists from YouTube and YouTube Music, plus import playlists, albums, mixes, and single videos.',
   badgeLabel: 'YouTube',
-  updateUrl: 'https://github.com/SEANPNEX/musico_plugins/releases/download/youtube-search-v1.0.0/youtube-search.musicoext',
+  updateUrl: 'https://github.com/SEANPNEX/musico_plugins/releases/download/youtube-search-v1.1.0/youtube-search.musicoext',
   capabilities: ['search', 'playlist', 'stream', 'cookie', 'proxy'],
   searchKinds: ['track', 'playlist', 'album'],
+  qualities: [
+    { id: 'highest', label: 'Best Available', badge: 'Best' },
+    { id: 'high', label: 'High', badge: 'High' },
+    { id: 'standard', label: 'Standard', badge: 'Std' },
+    { id: 'low', label: 'Low (Data Saver)', badge: 'Low' }
+  ],
+  defaultStreamQuality: 'standard',
+  defaultDownloadQuality: 'highest',
   urlPatterns: [
     '^https?://(www\\.|m\\.|music\\.)?youtube\\.com/(watch|playlist|browse|shorts|live|embed)',
     '^https?://youtu\\.be/[A-Za-z0-9_-]{11}'
@@ -1956,7 +1964,70 @@ function parseStreamTrackId(rawId) {
   return null;
 }
 
-function selectYtAudioCandidates(ctx, playerJson) {
+var YT_QUALITY_IDS = {
+  highest: true,
+  high: true,
+  standard: true,
+  low: true
+};
+
+var YT_QUALITY_ORDER = {
+  highest: {
+    m4a: [141, 140, 139, 'mp4a', 251, 250, 249, 'opus', 18, 'mp4v'],
+    opus: [251, 250, 249, 'opus', 141, 140, 139, 'mp4a', 18, 'mp4v'],
+    auto: [141, 251, 140, 250, 139, 249, 'opus', 'mp4a', 18, 'mp4v']
+  },
+  high: {
+    m4a: [140, 141, 139, 'mp4a', 251, 250, 249, 'opus', 18, 'mp4v'],
+    opus: [251, 250, 249, 'opus', 140, 141, 139, 'mp4a', 18, 'mp4v'],
+    auto: [251, 140, 141, 250, 139, 249, 'opus', 'mp4a', 18, 'mp4v']
+  },
+  standard: {
+    m4a: [140, 139, 141, 'mp4a', 250, 249, 251, 'opus', 18, 'mp4v'],
+    opus: [250, 249, 251, 'opus', 140, 139, 141, 'mp4a', 18, 'mp4v'],
+    auto: [250, 140, 249, 139, 251, 141, 'opus', 'mp4a', 18, 'mp4v']
+  },
+  low: {
+    m4a: [139, 140, 141, 'mp4a', 249, 250, 251, 'opus', 18, 'mp4v'],
+    opus: [249, 250, 251, 'opus', 139, 140, 141, 'mp4a', 18, 'mp4v'],
+    auto: [249, 139, 250, 140, 251, 141, 'opus', 'mp4a', 18, 'mp4v']
+  }
+};
+
+function resolveYtRequestedQuality(req) {
+  var raw = req && req.quality ? String(req.quality).trim().toLowerCase() : '';
+  if (raw && YT_QUALITY_IDS[raw]) {
+    return raw;
+  }
+  var purpose = req && req.purpose ? String(req.purpose).trim().toLowerCase() : '';
+  return purpose === 'download' ? 'highest' : 'standard';
+}
+
+function ytCandidateQualityMeta(cand) {
+  var itag = cand.itag;
+  var defaultKbps = itag === 141 ? 256
+    : itag === 251 ? 160
+      : itag === 140 ? 128
+        : itag === 250 ? 70
+          : itag === 249 ? 50
+            : itag === 139 ? 48
+              : itag === 18 ? 96
+                : 128;
+  var kbps = cand.bitrate > 0 ? Math.max(1, Math.round(cand.bitrate / 1000)) : defaultKbps;
+  var actualQuality;
+  if (itag === 141) actualQuality = 'highest';
+  else if (itag === 251) actualQuality = 'high';
+  else if (itag === 140 || itag === 250) actualQuality = 'standard';
+  else if (itag === 139 || itag === 249 || itag === 18) actualQuality = 'low';
+  else actualQuality = kbps >= 220 ? 'highest' : kbps >= 145 ? 'high' : kbps >= 65 ? 'standard' : 'low';
+  return {
+    actualQuality: actualQuality,
+    qualityLabel: String(kbps) + 'k',
+    bitrateKbps: kbps
+  };
+}
+
+function selectYtAudioCandidates(ctx, playerJson, requestedQuality) {
   var sd = playerJson && playerJson.streamingData;
   if (!sd) return [];
   var all = []
@@ -1966,6 +2037,9 @@ function selectYtAudioCandidates(ctx, playerJson) {
   var platform = String((ctx && ctx.env && ctx.env.platform) || '').toLowerCase();
   var isApple = (platform === 'ios' || platform === 'macos');
   var formatPref = String(getSetting(ctx, 'youtubeAudioFormat', 'auto')).toLowerCase();
+  var qualityKey = YT_QUALITY_IDS[requestedQuality] ? requestedQuality : 'standard';
+  var branch = (isApple || formatPref === 'm4a') ? 'm4a' : (formatPref === 'opus' ? 'opus' : 'auto');
+  var orderList = YT_QUALITY_ORDER[qualityKey][branch];
 
   var candidates = [];
   for (var i = 0; i < all.length; i++) {
@@ -1984,50 +2058,16 @@ function selectYtAudioCandidates(ctx, playerJson) {
       continue;
     }
 
-    var priority = -1;
-    var fileExtension = 'm4a';
-    var mimeType = 'audio/mp4';
-
-    if (isApple || formatPref === 'm4a') {
-      if (itag === 141) { priority = 0; fileExtension = 'm4a'; mimeType = 'audio/mp4'; }
-      else if (itag === 140) { priority = 1; fileExtension = 'm4a'; mimeType = 'audio/mp4'; }
-      else if (itag === 139) { priority = 2; fileExtension = 'm4a'; mimeType = 'audio/mp4'; }
-      else if (isMp4Audio) { priority = 3; fileExtension = 'm4a'; mimeType = 'audio/mp4'; }
-      else if (!isApple && isWebmAudio) {
-        if (itag === 251) priority = 4;
-        else if (itag === 250) priority = 5;
-        else if (itag === 249) priority = 6;
-        else priority = 7;
-        fileExtension = 'webm';
-        mimeType = 'audio/webm';
-      } else if (itag === 18) { priority = 8; fileExtension = 'mp4'; mimeType = 'video/mp4'; }
-      else if (isMp4Video) { priority = 9; fileExtension = 'mp4'; mimeType = 'video/mp4'; }
-    } else if (formatPref === 'opus') {
-      if (itag === 251) { priority = 0; fileExtension = 'webm'; mimeType = 'audio/webm'; }
-      else if (itag === 250) { priority = 1; fileExtension = 'webm'; mimeType = 'audio/webm'; }
-      else if (itag === 249) { priority = 2; fileExtension = 'webm'; mimeType = 'audio/webm'; }
-      else if (isWebmAudio) { priority = 3; fileExtension = 'webm'; mimeType = 'audio/webm'; }
-      else if (itag === 141) { priority = 4; fileExtension = 'm4a'; mimeType = 'audio/mp4'; }
-      else if (itag === 140) { priority = 5; fileExtension = 'm4a'; mimeType = 'audio/mp4'; }
-      else if (itag === 139) { priority = 6; fileExtension = 'm4a'; mimeType = 'audio/mp4'; }
-      else if (isMp4Audio) { priority = 7; fileExtension = 'm4a'; mimeType = 'audio/mp4'; }
-      else if (itag === 18) { priority = 8; fileExtension = 'mp4'; mimeType = 'video/mp4'; }
-      else if (isMp4Video) { priority = 9; fileExtension = 'mp4'; mimeType = 'video/mp4'; }
-    } else {
-      // Non-Apple auto: prefer 251, 250, 141, 140, 139, 18.
-      if (itag === 251) { priority = 0; fileExtension = 'webm'; mimeType = 'audio/webm'; }
-      else if (itag === 250) { priority = 1; fileExtension = 'webm'; mimeType = 'audio/webm'; }
-      else if (itag === 141) { priority = 2; fileExtension = 'm4a'; mimeType = 'audio/mp4'; }
-      else if (itag === 140) { priority = 3; fileExtension = 'm4a'; mimeType = 'audio/mp4'; }
-      else if (itag === 139) { priority = 4; fileExtension = 'm4a'; mimeType = 'audio/mp4'; }
-      else if (itag === 249) { priority = 5; fileExtension = 'webm'; mimeType = 'audio/webm'; }
-      else if (isWebmAudio) { priority = 6; fileExtension = 'webm'; mimeType = 'audio/webm'; }
-      else if (isMp4Audio) { priority = 7; fileExtension = 'm4a'; mimeType = 'audio/mp4'; }
-      else if (itag === 18) { priority = 8; fileExtension = 'mp4'; mimeType = 'video/mp4'; }
-      else if (isMp4Video) { priority = 9; fileExtension = 'mp4'; mimeType = 'video/mp4'; }
+    var priority = orderList.indexOf(itag);
+    if (priority < 0) {
+      if (isWebmAudio) priority = orderList.indexOf('opus');
+      else if (isMp4Audio) priority = orderList.indexOf('mp4a');
+      else if (isMp4Video) priority = orderList.indexOf('mp4v');
     }
-
     if (priority < 0) continue;
+
+    var fileExtension = isWebmAudio ? 'webm' : (isMp4Video ? 'mp4' : 'm4a');
+    var mimeType = isWebmAudio ? 'audio/webm' : (isMp4Video ? 'video/mp4' : 'audio/mp4');
     var bitrate = Number(f.bitrate || f.averageBitrate || 0) || 0;
     var contentLength = f.contentLength != null ? parseInt(String(f.contentLength), 10) : null;
     if (!contentLength || !isFinite(contentLength) || contentLength <= 0) contentLength = null;
@@ -2100,7 +2140,7 @@ async function probeYtCandidate(ctx, candidate, userAgent) {
   return true;
 }
 
-async function resolveYtStream(ctx, videoId, ytCookie, forceRefresh) {
+async function resolveYtStream(ctx, videoId, ytCookie, forceRefresh, requestedQuality) {
   var visitorData = await fetchYtVisitorData(ctx, Boolean(forceRefresh));
   var clients = [
     YT_CLIENTS.VISIONOS,
@@ -2150,7 +2190,7 @@ async function resolveYtStream(ctx, videoId, ytCookie, forceRefresh) {
             }
           }
 
-          var candidates = selectYtAudioCandidates(ctx, json);
+          var candidates = selectYtAudioCandidates(ctx, json, requestedQuality);
           var expSec = json && json.streamingData && json.streamingData.expiresInSeconds
             ? parseInt(String(json.streamingData.expiresInSeconds), 10)
             : 0;
@@ -2158,6 +2198,7 @@ async function resolveYtStream(ctx, videoId, ytCookie, forceRefresh) {
           for (var c = 0; c < Math.min(3, candidates.length); c++) {
             var cand = candidates[c];
             if (await probeYtCandidate(ctx, cand, cl.userAgent)) {
+              var qMeta = ytCandidateQualityMeta(cand);
               return {
                 url: cand.url,
                 headers: {
@@ -2168,7 +2209,10 @@ async function resolveYtStream(ctx, videoId, ytCookie, forceRefresh) {
                 mimeType: cand.mimeType,
                 expiresAtMs: extractYtExpireMs(cand.url, expSec),
                 fallbackUrls: [],
-                contentLength: cand.contentLength
+                contentLength: cand.contentLength,
+                actualQuality: qMeta.actualQuality,
+                qualityLabel: qMeta.qualityLabel,
+                bitrateKbps: qMeta.bitrateKbps
               };
             }
           }
@@ -2205,7 +2249,8 @@ async function resolveStream(ctx, req) {
     throw extError('NO_PLAYABLE_STREAM', 'Unrecognized YouTube track ID: ' + String(rawTrackId));
   }
   var ytCookie = req && req.cookie ? String(req.cookie).trim() : null;
-  return await resolveYtStream(ctx, parsed.videoId, ytCookie, Boolean(req && req.forceRefresh));
+  var requestedQuality = resolveYtRequestedQuality(req);
+  return await resolveYtStream(ctx, parsed.videoId, ytCookie, Boolean(req && req.forceRefresh), requestedQuality);
 }
 
 module.exports = {
