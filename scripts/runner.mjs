@@ -1037,7 +1037,8 @@ export async function runSearchLyrics(ext, bridge, req, timeoutMs = 15000) {
     ...(req?.album ? { album: String(req.album) } : {}),
     ...(typeof req?.durationSec === 'number' && Number.isFinite(req.durationSec) && req.durationSec > 0
       ? { durationSec: req.durationSec }
-      : {})
+      : {}),
+    ...(req?.cookie ? { cookie: String(req.cookie) } : {})
   };
   const result = await invokeWithTimeout(() => ext.exportsObj.searchLyrics(bridge.ctx, payload), timeoutMs);
   if (result == null) return [];

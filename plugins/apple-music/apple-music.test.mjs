@@ -52,7 +52,7 @@ test('portability & manifest contract for apple-music', () => {
   assert.equal(m.apiVersion, 1);
   assert.equal(m.id, 'com.seanpnex.musico.applemusic');
   assert.equal(m.name, 'Apple Music');
-  assert.equal(m.version, '1.0.0');
+  assert.equal(m.version, '1.0.1');
   assert.equal(m.author, 'SEANPNEX');
   assert.equal(m.badgeLabel, 'Apple Music');
   assert.equal(
@@ -166,6 +166,7 @@ test('fetchCollection resolves tracks and rejects empty collections', async () =
         json: {
           remoteId: 'album:1544711907',
           title: 'THE BOOK',
+          artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/album-cover.jpg',
           tracks: [
             {
               remoteTrackId: '1544711909',
@@ -173,7 +174,16 @@ test('fetchCollection resolves tracks and rejects empty collections', async () =
               artist: 'YOASOBI',
               album: 'THE BOOK',
               trackNumber: 1,
-              durationSec: 50
+              durationSec: 50,
+              artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/track-cover.jpg'
+            },
+            {
+              remoteTrackId: '1544711910',
+              title: 'Encore',
+              artist: 'YOASOBI',
+              album: 'THE BOOK',
+              trackNumber: 2,
+              durationSec: 270
             }
           ],
           nextCursor: null
@@ -186,8 +196,11 @@ test('fetchCollection resolves tracks and rejects empty collections', async () =
     url: 'https://music.apple.com/us/album/the-book/1544711907'
   });
   assert.equal(col.remoteId, 'album:1544711907');
-  assert.equal(col.tracks.length, 1);
+  assert.equal(col.artworkUrl, 'https://is1-ssl.mzstatic.com/image/thumb/album-cover.jpg');
+  assert.equal(col.tracks.length, 2);
   assert.equal(col.tracks[0].remoteTrackId, '1544711909');
+  assert.equal(col.tracks[0].artworkUrl, 'https://is1-ssl.mzstatic.com/image/thumb/track-cover.jpg');
+  assert.equal(col.tracks[1].artworkUrl, 'https://is1-ssl.mzstatic.com/image/thumb/album-cover.jpg');
 
   await assert.rejects(
     () => runFetchCollection(ext, bridge, { url: 'https://music.apple.com/us/album/empty/999' }),
@@ -244,8 +257,8 @@ test('resolveStream returns stream URL with zero HTTP calls and honors req.quali
   }
 });
 
-test('searchLyrics fetches candidates and treats 404 as empty list', async () => {
-  const { ext, bridge } = createMock({
+test('searchLyrics forwards Bearer auth and treats 404 as empty list', async () => {
+  const { ext, bridge, requests } = createMock({
     settings: { serverUrl: 'https://am.local.test:8787' },
     httpHandler: async ({ url }) => {
       if (url.includes('Missing')) {
@@ -265,11 +278,22 @@ test('searchLyrics fetches candidates and treats 404 as empty list', async () =>
     }
   });
 
-  const hits = await runSearchLyrics(ext, bridge, { title: 'Idol', artist: 'YOASOBI', durationSec: 213 });
+  const hits = await runSearchLyrics(ext, bridge, {
+    title: 'Idol',
+    artist: 'YOASOBI',
+    durationSec: 213,
+    cookie: 'secret-api-token'
+  });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].headers.Authorization, 'Bearer secret-api-token');
   assert.equal(hits.length, 1);
   assert.equal(hits[0].syncedLyrics, '[00:01.00]Muteki no egao');
 
-  const empty = await runSearchLyrics(ext, bridge, { title: 'Missing', artist: 'Nobody' });
+  const empty = await runSearchLyrics(ext, bridge, {
+    title: 'Missing',
+    artist: 'Nobody',
+    cookie: 'secret-api-token'
+  });
   assert.deepEqual(plain(empty), []);
 });
 

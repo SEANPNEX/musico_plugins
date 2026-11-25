@@ -4,7 +4,7 @@ var manifest = {
   apiVersion: 1,
   id: 'com.seanpnex.musico.applemusic',
   name: 'Apple Music',
-  version: '1.0.0',
+  version: '1.0.1',
   author: 'SEANPNEX',
   description: 'Search, browse albums/playlists, stream, and fetch lyrics from Apple Music via your self-hosted companion server.',
   badgeLabel: 'Apple Music',
@@ -351,7 +351,9 @@ async function fetchCollection(ctx, req) {
       album: tr.album ? String(tr.album) : (data && data.title ? String(data.title) : 'Apple Music'),
       trackNumber: typeof tr.trackNumber === 'number' ? tr.trackNumber : (i + 1),
       durationSec: typeof tr.durationSec === 'number' && tr.durationSec > 0 ? tr.durationSec : 0,
-      artworkUrl: tr.artworkUrl ? String(tr.artworkUrl) : null
+      artworkUrl: tr.artworkUrl
+        ? String(tr.artworkUrl)
+        : (data && data.artworkUrl ? String(data.artworkUrl) : null)
     });
   }
 
@@ -359,9 +361,14 @@ async function fetchCollection(ctx, req) {
     throw extError('EMPTY_COLLECTION', 'No playable tracks found in this Apple Music collection.');
   }
 
+  var collectionArtwork = data && data.artworkUrl
+    ? String(data.artworkUrl)
+    : (tracks[0] && tracks[0].artworkUrl ? tracks[0].artworkUrl : null);
+
   return {
     remoteId: data && data.remoteId ? String(data.remoteId) : parsed.remoteId,
     title: data && data.title ? String(data.title) : 'Apple Music',
+    artworkUrl: collectionArtwork,
     tracks: tracks,
     nextCursor: data && data.nextCursor ? String(data.nextCursor) : null
   };
@@ -430,7 +437,7 @@ async function searchLyrics(ctx, req) {
   var res = await ctx.http.request({
     method: 'GET',
     url: apiUrl,
-    headers: buildAuthHeaders(null),
+    headers: buildAuthHeaders(req && req.cookie),
     followRedirects: true,
     timeoutMs: 15000
   });
