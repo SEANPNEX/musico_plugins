@@ -8,8 +8,10 @@ import {
   loadExtension,
   runCanHandle,
   runFetchCollection,
+  runPollQrLogin,
   runResolveStream,
   runSearch,
+  runStartQrLogin,
   scanPortabilityViolations,
   validateHostPattern
 } from '../../scripts/runner.mjs';
@@ -53,14 +55,14 @@ test('portability & manifest contract for bilibili-search (no album concept)', (
   assert.equal(m.apiVersion, 1);
   assert.equal(m.id, 'bilibili-search');
   assert.equal(m.name, 'Bilibili Search');
-  assert.equal(m.version, '1.1.0');
+  assert.equal(m.version, '1.2.0');
   assert.equal(m.author, 'SEANPNEX');
   assert.equal(m.badgeLabel, 'Bilibili');
   assert.equal(
     m.updateUrl,
     'https://github.com/SEANPNEX/musico_plugins/releases/latest/download/bilibili-search.musicoext'
   );
-  assert.deepEqual(m.capabilities, ['search', 'playlist', 'stream', 'cookie', 'proxy']);
+  assert.deepEqual(m.capabilities, ['search', 'playlist', 'stream', 'cookie', 'qr_login', 'proxy']);
   assert.deepEqual(m.searchKinds, ['track', 'playlist']);
   assert.equal(m.searchKinds.includes('album'), false);
   assert.deepEqual(m.qualities, [
@@ -82,7 +84,7 @@ test('portability & manifest contract for bilibili-search (no album concept)', (
   assert.deepEqual(m.settings.map((s) => s.key), ['biliSearchOrder']);
   assert.deepEqual(
     Object.keys(ext.exportsObj).sort(),
-    ['canHandle', 'fetchCollection', 'manifest', 'resolveStream', 'search']
+    ['canHandle', 'fetchCollection', 'manifest', 'pollQrLogin', 'resolveStream', 'search', 'startQrLogin']
   );
 });
 
@@ -609,5 +611,94 @@ test('resolveStream: Bilibili DASH/FLAC priority, bare IDs, and cookie privacy',
   assert.ok(res.headers.Cookie.includes('SESSDATA=secret_bili_token'));
   for (const entry of logs) {
     assert.equal(entry.message.includes('secret_bili_token'), false);
+  }
+});
+
+test('qr_login startQrLogin and pollQrLogin handle pending, scanned, expired, confirmed (Set-Cookie & url fallback), and redact secrets', async () => {
+  const secretSess = 'QR_BILI_SESSDATA_SECRET_123';
+  const secretJct = 'QR_BILI_JCT_456';
+  let pollStep = 0;
+
+  const { ext, bridge, logs } = createBiliMock({
+    httpHandler: async ({ url }) => {
+      if (url.includes('/spi')) return { json: { code: 0, data: { b_3: 'QR-BUVID3' } } };
+      if (url.includes('/web/qrcode/generate')) {
+        return {
+          json: {
+            code: 0,
+            data: {
+              url: 'https://passport.bilibili.com/h5-app/passport/login/scan?qrcode_key=qr_key_abc',
+              qrcode_key: 'qr_key_abc'
+            }
+          }
+        };
+      }
+      if (url.includes('/web/qrcode/poll')) {
+        assert.ok(url.includes('qrcode_key=qr_key_abc'));
+        pollStep += 1;
+        if (pollStep === 1) return { json: { code: 0, data: { code: 86101, message: '未扫码' } } };
+        if (pollStep === 2) return { json: { code: 0, data: { code: 86090, message: '已扫码未确认' } } };
+        if (pollStep === 3) return { json: { code: 0, data: { code: 86038, message: '二维码已失效' } } };
+        if (pollStep === 4) {
+          return {
+            headers: {
+              'set-cookie': [
+                `SESSDATA=${secretSess}; Path=/; HttpOnly`,
+                `bili_jct=${secretJct}; Path=/`
+              ].join(', ')
+            },
+            json: {
+              code: 0,
+              data: {
+                code: 0,
+                url: 'https://passport.biligame.com/x/passport-login/web/crossDomain?DedeUserID=42',
+                refresh_token: 'secret_refresh_tok'
+              }
+            }
+          };
+        }
+        return {
+          json: {
+            code: 0,
+            data: {
+              code: 0,
+              url: `https://www.bilibili.com/?SESSDATA=${secretSess}&DedeUserID=42`
+            }
+          }
+        };
+      }
+      if (url.includes('/x/web-interface/nav')) {
+        return { json: { code: 0, data: { uname: 'BiliTester' } } };
+      }
+      throw new Error('Unexpected URL ' + url);
+    }
+  });
+
+  const session = await runStartQrLogin(ext, bridge);
+  assert.equal(session.sessionId, 'qr_key_abc');
+  assert.match(session.qrContent, /qrcode_key=qr_key_abc/);
+
+  const r1 = await runPollQrLogin(ext, bridge, { sessionId: session.sessionId });
+  assert.equal(r1.status, 'pending');
+
+  const r2 = await runPollQrLogin(ext, bridge, { sessionId: session.sessionId });
+  assert.equal(r2.status, 'scanned');
+
+  const r3 = await runPollQrLogin(ext, bridge, { sessionId: session.sessionId });
+  assert.equal(r3.status, 'expired');
+
+  const r4 = await runPollQrLogin(ext, bridge, { sessionId: session.sessionId });
+  assert.equal(r4.status, 'confirmed');
+  assert.equal(r4.accountName, 'BiliTester');
+  assert.ok(r4.cookie.includes(`SESSDATA=${secretSess}`));
+  assert.ok(r4.cookie.includes(`bili_jct=${secretJct}`));
+  assert.ok(r4.cookie.includes('DedeUserID=42'));
+
+  const r5 = await runPollQrLogin(ext, bridge, { sessionId: session.sessionId });
+  assert.equal(r5.status, 'confirmed');
+  assert.equal(r5.cookie, `SESSDATA=${secretSess}; DedeUserID=42`);
+
+  for (const entry of logs) {
+    assert.equal(entry.message.includes(secretSess) || entry.message.includes(secretJct), false);
   }
 });

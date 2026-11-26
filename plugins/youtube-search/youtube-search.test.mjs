@@ -53,14 +53,19 @@ test('portability & manifest contract for youtube-search', () => {
   assert.equal(m.apiVersion, 1);
   assert.equal(m.id, 'youtube-search');
   assert.equal(m.name, 'YouTube Search');
-  assert.equal(m.version, '1.1.0');
+  assert.equal(m.version, '1.2.0');
   assert.equal(m.author, 'SEANPNEX');
   assert.equal(m.badgeLabel, 'YouTube');
   assert.equal(
     m.updateUrl,
     'https://github.com/SEANPNEX/musico_plugins/releases/latest/download/youtube-search.musicoext'
   );
-  assert.deepEqual(m.capabilities, ['search', 'playlist', 'stream', 'cookie', 'proxy']);
+  assert.deepEqual(m.capabilities, ['search', 'playlist', 'stream', 'cookie', 'web_login', 'proxy']);
+  assert.deepEqual(m.webLogin, {
+    loginUrl: 'https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fmusic.youtube.com%2F',
+    cookieDomains: ['.youtube.com', '.google.com'],
+    requiredCookies: ['SAPISID', '__Secure-3PAPISID']
+  });
   assert.deepEqual(m.searchKinds, ['track', 'playlist', 'album']);
   assert.deepEqual(m.qualities, [
     { id: 'highest', label: 'Best Available', badge: 'Best' },

@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 
-export const VALID_CAPABILITIES = new Set(['playlist', 'tree', 'stream', 'cookie', 'proxy', 'lyrics', 'search', 'qr_login']);
+export const VALID_CAPABILITIES = new Set(['playlist', 'tree', 'stream', 'cookie', 'proxy', 'lyrics', 'search', 'qr_login', 'web_login']);
 export const VALID_SEARCH_KINDS = new Set(['track', 'playlist', 'album']);
 export const VALID_SETTING_TYPES = new Set(['boolean', 'string', 'select', 'server_url']);
 export const VALID_PLATFORMS = new Set(['ios', 'macos', 'android', 'windows']);
@@ -270,6 +270,54 @@ export function validateManifest(manifest) {
       assert.ok(
         seenQualityIds.has(manifest.defaultDownloadQuality.trim()),
         `manifest.defaultDownloadQuality "${manifest.defaultDownloadQuality}" must reference an id in manifest.qualities`
+      );
+    }
+  }
+
+  if (manifest.capabilities.includes('web_login')) {
+    assert.ok(
+      manifest.webLogin && typeof manifest.webLogin === 'object' && !Array.isArray(manifest.webLogin),
+      'web_login extension must declare manifest.webLogin'
+    );
+  }
+  if (manifest.webLogin !== undefined && manifest.webLogin !== null) {
+    const wl = manifest.webLogin;
+    assert.ok(wl && typeof wl === 'object' && !Array.isArray(wl), 'manifest.webLogin must be an object');
+    assert.ok(typeof wl.loginUrl === 'string' && wl.loginUrl.trim().length > 0, 'manifest.webLogin.loginUrl required');
+    let parsedLoginUrl;
+    try {
+      parsedLoginUrl = new URL(wl.loginUrl.trim());
+    } catch {
+      assert.fail(`manifest.webLogin.loginUrl must be a valid HTTPS URL: ${wl.loginUrl}`);
+    }
+    assert.equal(parsedLoginUrl.protocol, 'https:', 'manifest.webLogin.loginUrl must use https://');
+    assert.ok(parsedLoginUrl.hostname && parsedLoginUrl.hostname.length > 0, 'manifest.webLogin.loginUrl must include a valid host');
+
+    assert.ok(
+      Array.isArray(wl.cookieDomains) && wl.cookieDomains.length >= 1 && wl.cookieDomains.length <= 16,
+      'manifest.webLogin.cookieDomains must contain 1..16 entries'
+    );
+    for (const rawDomain of wl.cookieDomains) {
+      assert.ok(typeof rawDomain === 'string', 'cookieDomains entries must be strings');
+      const dom = rawDomain.trim();
+      assert.ok(
+        dom.length > 0 && !/\s/.test(dom) && !dom.includes('://') && !dom.includes('/'),
+        `Invalid webLogin.cookieDomains entry: ${rawDomain}`
+      );
+    }
+    if (wl.requiredCookies !== undefined && wl.requiredCookies !== null) {
+      assert.ok(
+        Array.isArray(wl.requiredCookies) && wl.requiredCookies.length <= 16,
+        'manifest.webLogin.requiredCookies must be an array of at most 16 entries'
+      );
+      for (const rc of wl.requiredCookies) {
+        assert.ok(typeof rc === 'string' && rc.trim().length > 0, 'requiredCookies entries must be non-empty strings');
+      }
+    }
+    if (wl.userAgent !== undefined && wl.userAgent !== null) {
+      assert.ok(
+        typeof wl.userAgent === 'string' && wl.userAgent.trim().length > 0 && wl.userAgent.length <= 512,
+        'manifest.webLogin.userAgent must be a non-empty string (<= 512 chars)'
       );
     }
   }
@@ -1446,6 +1494,54 @@ export async function runSelfTest() {
   );
   assert.equal(extractApprovedHost('file:///etc/passwd'), null);
   assert.equal(extractApprovedHost('https://*.example.com'), null);
+
+  // 8. Verify web_login manifest validation
+  validateManifest({
+    apiVersion: 1,
+    id: 'com.test.weblogin',
+    name: 'Web Login Probe',
+    version: '1.0.0',
+    capabilities: ['search', 'web_login'],
+    permissions: { hosts: ['api.example.com'] },
+    webLogin: {
+      loginUrl: 'https://accounts.example.com/login',
+      cookieDomains: ['.example.com'],
+      requiredCookies: ['SID'],
+      userAgent: 'Mozilla/5.0 TestAgent'
+    }
+  });
+  assert.throws(() => validateManifest({
+    apiVersion: 1,
+    id: 'com.test.weblogin.missing',
+    name: 'Missing WebLogin',
+    version: '1.0.0',
+    capabilities: ['search', 'web_login'],
+    permissions: { hosts: ['api.example.com'] }
+  }), /webLogin/);
+  assert.throws(() => validateManifest({
+    apiVersion: 1,
+    id: 'com.test.weblogin.badurl',
+    name: 'Bad URL WebLogin',
+    version: '1.0.0',
+    capabilities: ['search', 'web_login'],
+    permissions: { hosts: ['api.example.com'] },
+    webLogin: {
+      loginUrl: 'http://accounts.example.com/login',
+      cookieDomains: ['.example.com']
+    }
+  }), /https:/);
+  assert.throws(() => validateManifest({
+    apiVersion: 1,
+    id: 'com.test.weblogin.emptydomains',
+    name: 'Empty Domains WebLogin',
+    version: '1.0.0',
+    capabilities: ['search', 'web_login'],
+    permissions: { hosts: ['api.example.com'] },
+    webLogin: {
+      loginUrl: 'https://accounts.example.com/login',
+      cookieDomains: []
+    }
+  }), /cookieDomains/);
 
   return {
     ok: true,

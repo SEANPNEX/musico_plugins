@@ -40,6 +40,14 @@ Defaults: `defaultStreamQuality: "standard"`, `defaultDownloadQuality: "highest"
 |---|---|---|---|
 | `biliSearchOrder` | `totalrank` | `totalrank`, `click`, `pubdate`, `stow` | Bilibili search sort order |
 
+## QR Code Login (`qr_login`)
+
+`bilibili-search.musico.js` (`v1.2.0`) declares `"qr_login"` (`startQrLogin(ctx)` / `pollQrLogin(ctx, req)`) using Bilibili's passport QR endpoints (`passport.bilibili.com`):
+
+- Open the extension card in Musico and click **Sign In with QR Code** to scan with the Bilibili mobile app.
+- On confirmation (`0`), Musico extracts `SESSDATA`, `bili_jct`, `DedeUserID`, and `DedeUserID__ckMd5` without logging secrets.
+- Manual cookie paste / `cookies.txt` import remain supported as fallbacks.
+
 ## Testing
 
 ```bash

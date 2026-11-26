@@ -4,12 +4,17 @@ var manifest = {
   apiVersion: 1,
   id: 'youtube-search',
   name: 'YouTube Search',
-  version: '1.1.0',
+  version: '1.2.0',
   author: 'SEANPNEX',
-  description: 'Search songs, albums, and playlists from YouTube and YouTube Music, plus import playlists, albums, mixes, and single videos.',
+  description: 'Search songs, albums, and playlists from YouTube and YouTube Music, plus import playlists, albums, mixes, single videos, and in-app web login.',
   badgeLabel: 'YouTube',
   updateUrl: 'https://github.com/SEANPNEX/musico_plugins/releases/latest/download/youtube-search.musicoext',
-  capabilities: ['search', 'playlist', 'stream', 'cookie', 'proxy'],
+  capabilities: ['search', 'playlist', 'stream', 'cookie', 'web_login', 'proxy'],
+  webLogin: {
+    loginUrl: 'https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fmusic.youtube.com%2F',
+    cookieDomains: ['.youtube.com', '.google.com'],
+    requiredCookies: ['SAPISID', '__Secure-3PAPISID']
+  },
   searchKinds: ['track', 'playlist', 'album'],
   qualities: [
     { id: 'highest', label: 'Best Available', badge: 'Best' },

@@ -39,6 +39,13 @@ Defaults: `defaultStreamQuality: "standard"`, `defaultDownloadQuality: "highest"
 | `youtubeMode` | `music` | `music`, `youtube` | Use YouTube Music (`WEB_REMIX`) or YouTube Main (`WEB`) |
 | `youtubeAudioFormat` | `auto` | `auto`, `m4a`, `opus` | Audio format preference on non-Apple platforms (Apple always uses M4A/MP4) |
 
+## In-App Web Login (`web_login`)
+
+`youtube-search.musico.js` (`v1.2.0`) declares `"web_login"` with `manifest.webLogin` (`loginUrl`, `cookieDomains`, `requiredCookies`):
+
+- Open the extension card in Musico and choose **Sign In in Browser…** to sign in and capture `SAPISID` / Google session cookies directly into the extension's masked cookie store.
+- You can also import a browser `cookies.txt` file or paste cookies manually as a fallback.
+
 ## Testing
 
 ```bash

@@ -4,12 +4,12 @@ var manifest = {
   apiVersion: 1,
   id: 'bilibili-search',
   name: 'Bilibili Search',
-  version: '1.1.0',
+  version: '1.2.0',
   author: 'SEANPNEX',
-  description: 'Search songs, multi-part videos (分P), and collections (合集) from Bilibili, plus import videos, favlists, collections, and series.',
+  description: 'Search songs, multi-part videos (分P), and collections (合集) from Bilibili, plus import videos, favlists, collections, series, and QR login.',
   badgeLabel: 'Bilibili',
   updateUrl: 'https://github.com/SEANPNEX/musico_plugins/releases/latest/download/bilibili-search.musicoext',
-  capabilities: ['search', 'playlist', 'stream', 'cookie', 'proxy'],
+  capabilities: ['search', 'playlist', 'stream', 'cookie', 'qr_login', 'proxy'],
   searchKinds: ['track', 'playlist'],
   qualities: [
     { id: 'highest', label: 'Hi-Res / 192k', badge: 'FLAC', lossless: true },
@@ -26,6 +26,7 @@ var manifest = {
   permissions: {
     hosts: [
       'api.bilibili.com',
+      'passport.bilibili.com',
       'www.bilibili.com',
       'm.bilibili.com',
       'space.bilibili.com',
@@ -1712,10 +1713,236 @@ async function resolveStream(ctx, req) {
   return await resolveBiliStream(ctx, parsed, biliCookie, requestedQuality);
 }
 
+function splitSetCookieHeader(headerVal) {
+  var raw = String(headerVal == null ? '' : headerVal).trim();
+  if (!raw) return [];
+  var out = [];
+  var start = 0;
+  var inExpires = false;
+  for (var i = 0; i < raw.length; i++) {
+    var ch = raw.charAt(i);
+    if (!inExpires && (ch === 'e' || ch === 'E') && raw.slice(i, i + 8).toLowerCase() === 'expires=') {
+      inExpires = true;
+      continue;
+    }
+    if (inExpires && ch === ';') {
+      inExpires = false;
+      continue;
+    }
+    if (!inExpires && ch === ',') {
+      var slice = raw.slice(start, i).trim();
+      if (slice) out.push(slice);
+      start = i + 1;
+    }
+  }
+  var tail = raw.slice(start).trim();
+  if (tail) out.push(tail);
+  return out;
+}
+
+function extractBiliAuthCookies(res, confirmUrl) {
+  var entries = [];
+  if (res && Array.isArray(res.setCookies) && res.setCookies.length > 0) {
+    for (var s = 0; s < res.setCookies.length; s++) {
+      var expanded = splitSetCookieHeader(res.setCookies[s]);
+      for (var e = 0; e < expanded.length; e++) {
+        entries.push(expanded[e]);
+      }
+    }
+  } else if (res && res.headers && typeof res.headers['set-cookie'] === 'string') {
+    entries = splitSetCookieHeader(res.headers['set-cookie']);
+  }
+
+  var cookies = {};
+  var allowed = {
+    SESSDATA: true,
+    bili_jct: true,
+    DedeUserID: true,
+    DedeUserID__ckMd5: true
+  };
+
+  for (var i = 0; i < entries.length; i++) {
+    var rawEntry = String(entries[i] || '').trim();
+    if (!rawEntry) continue;
+    var semi = rawEntry.indexOf(';');
+    var firstPair = (semi >= 0 ? rawEntry.slice(0, semi) : rawEntry).trim();
+    var eq = firstPair.indexOf('=');
+    if (eq <= 0) continue;
+    var name = firstPair.slice(0, eq).trim();
+    var val = firstPair.slice(eq + 1).trim();
+    if (allowed[name] && val && !cookies[name]) {
+      cookies[name] = val;
+    }
+  }
+
+  var urlStr = typeof confirmUrl === 'string' ? confirmUrl.trim() : '';
+  if (urlStr) {
+    var qIdx = urlStr.indexOf('?');
+    if (qIdx >= 0) {
+      var qs = urlStr.slice(qIdx + 1).split('#')[0];
+      var parts = qs.split('&');
+      for (var p = 0; p < parts.length; p++) {
+        var seg = parts[p];
+        if (!seg) continue;
+        var eqIdx = seg.indexOf('=');
+        if (eqIdx <= 0) continue;
+        var pName = decodeURIComponent(seg.slice(0, eqIdx));
+        var pVal = decodeURIComponent(seg.slice(eqIdx + 1));
+        if (allowed[pName] && pVal && !cookies[pName]) {
+          cookies[pName] = pVal;
+        }
+      }
+    }
+  }
+
+  return cookies;
+}
+
+async function startQrLogin(ctx) {
+  var cookie = await resolveBiliCookie(ctx, null);
+  var res = await ctx.http.request({
+    method: 'GET',
+    url: 'https://passport.bilibili.com/x/passport-login/web/qrcode/generate',
+    headers: biliHeaders(cookie, 'https://www.bilibili.com/', 'https://www.bilibili.com'),
+    followRedirects: true,
+    timeoutMs: 12000
+  });
+  if (res.status >= 400 || !res.text) {
+    throw extError('NETWORK_ERROR', 'Bilibili QR generate failed with HTTP ' + String(res.status));
+  }
+  var parsed = {};
+  try {
+    parsed = JSON.parse(res.text);
+  } catch (e) {
+    throw extError('NETWORK_ERROR', 'Invalid JSON from Bilibili QR generate endpoint.');
+  }
+  if (!parsed || parsed.code !== 0 || !parsed.data) {
+    throw extError('NETWORK_ERROR', 'Bilibili QR generate returned code ' + String(parsed && parsed.code));
+  }
+  var qrUrl = typeof parsed.data.url === 'string' ? parsed.data.url.trim() : '';
+  var qrcodeKey = typeof parsed.data.qrcode_key === 'string' ? parsed.data.qrcode_key.trim() : '';
+  if (!qrUrl || !qrcodeKey) {
+    throw extError('NETWORK_ERROR', 'Bilibili QR response missing url or qrcode_key.');
+  }
+  ctx.log.info('started Bilibili QR login session');
+  return {
+    sessionId: qrcodeKey,
+    qrContent: qrUrl,
+    pollIntervalMs: 2500,
+    expiresAtMs: Date.now() + 180000
+  };
+}
+
+async function pollQrLogin(ctx, req) {
+  var sessionId = req && req.sessionId ? String(req.sessionId).trim() : '';
+  if (!sessionId) {
+    return {
+      status: 'error',
+      message: 'Missing QR login sessionId.'
+    };
+  }
+  var baseCookie = await resolveBiliCookie(ctx, null);
+  var res = await ctx.http.request({
+    method: 'GET',
+    url: 'https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=' + encodeURIComponent(sessionId),
+    headers: biliHeaders(baseCookie, 'https://www.bilibili.com/', 'https://www.bilibili.com'),
+    followRedirects: true,
+    timeoutMs: 12000
+  });
+  if (res.status >= 400 || !res.text) {
+    return {
+      status: 'error',
+      message: 'Bilibili QR poll failed with HTTP ' + String(res.status)
+    };
+  }
+  var parsed = {};
+  try {
+    parsed = JSON.parse(res.text);
+  } catch (e) {
+    return {
+      status: 'error',
+      message: 'Invalid JSON from Bilibili QR poll endpoint.'
+    };
+  }
+  var data = parsed && parsed.data ? parsed.data : {};
+  var code = typeof data.code === 'number' ? data.code : -1;
+
+  if (code === 86101) {
+    return {
+      status: 'pending',
+      message: typeof data.message === 'string' && data.message ? data.message : undefined
+    };
+  }
+  if (code === 86090) {
+    return {
+      status: 'scanned',
+      message: typeof data.message === 'string' && data.message ? data.message : undefined
+    };
+  }
+  if (code === 86038) {
+    return {
+      status: 'expired',
+      message: typeof data.message === 'string' && data.message ? data.message : 'QR code expired.'
+    };
+  }
+  if (code === 0) {
+    var extracted = extractBiliAuthCookies(res, data.url);
+    if (!extracted.SESSDATA) {
+      return {
+        status: 'error',
+        message: 'Login confirmed, but Bilibili did not return a SESSDATA cookie.'
+      };
+    }
+    var cookieParts = [];
+    var keys = ['SESSDATA', 'bili_jct', 'DedeUserID', 'DedeUserID__ckMd5'];
+    for (var k = 0; k < keys.length; k++) {
+      var name = keys[k];
+      if (extracted[name]) {
+        cookieParts.push(name + '=' + extracted[name]);
+      }
+    }
+    var cookieStr = cookieParts.join('; ');
+    var accountName = '';
+    try {
+      var navCookie = await resolveBiliCookie(ctx, cookieStr);
+      var navRes = await ctx.http.request({
+        method: 'GET',
+        url: 'https://api.bilibili.com/x/web-interface/nav',
+        headers: biliHeaders(navCookie, 'https://www.bilibili.com/', 'https://www.bilibili.com'),
+        followRedirects: true,
+        timeoutMs: 5000
+      });
+      if (navRes.status >= 200 && navRes.status < 300 && navRes.text) {
+        var navJson = JSON.parse(navRes.text);
+        if (navJson && navJson.data && typeof navJson.data.uname === 'string') {
+          accountName = navJson.data.uname.trim();
+        }
+      }
+    } catch (e) {
+      // Account profile lookup is best-effort once SESSDATA is captured.
+    }
+    ctx.log.info('confirmed Bilibili QR login');
+    return {
+      status: 'confirmed',
+      cookie: cookieStr,
+      accountName: accountName || undefined
+    };
+  }
+
+  return {
+    status: 'error',
+    message: typeof data.message === 'string' && data.message
+      ? data.message
+      : 'Unexpected Bilibili QR login code ' + String(code)
+  };
+}
+
 module.exports = {
   manifest: manifest,
   canHandle: canHandle,
   fetchCollection: fetchCollection,
   resolveStream: resolveStream,
-  search: search
+  search: search,
+  startQrLogin: startQrLogin,
+  pollQrLogin: pollQrLogin
 };
