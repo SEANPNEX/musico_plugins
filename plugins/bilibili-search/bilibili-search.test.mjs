@@ -73,9 +73,9 @@ test('portability & manifest contract for bilibili-search (no album concept)', (
   ]);
   assert.equal(m.defaultStreamQuality, 'standard');
   assert.equal(m.defaultDownloadQuality, 'highest');
-  assert.equal(m.urlPatterns.length, 2);
+  assert.equal(m.urlPatterns.length, 6);
   for (const pat of m.urlPatterns) {
-    assert.doesNotThrow(() => new RegExp(pat));
+    assert.doesNotThrow(() => new RegExp(pat, 'i'));
   }
   for (const h of m.permissions.hosts) {
     validateHostPattern(h);
@@ -88,28 +88,77 @@ test('portability & manifest contract for bilibili-search (no album concept)', (
   );
 });
 
-test('canHandle recognizes Bilibili URLs and rejects YouTube/other URLs', () => {
+function matchesAnyUrlPattern(manifest, candidate) {
+  const regexes = (manifest.urlPatterns || []).map((pat) => new RegExp(pat, 'i'));
+  return regexes.some((re) => re.test(String(candidate || '').trim()));
+}
+
+test('urlPatterns (case-insensitive) + canHandle cover all Bilibili URLs, schemeless links, namespaced/bare IDs, and reject Google Drive/other URLs', () => {
   const ext = loadExtension(PLUGIN_PATH, { strict: true, staticCheck: true });
-  const cases = [
-    ['https://www.bilibili.com/video/BV19Dq6BcEwW/?p=2', true, 'bili:video:BV19Dq6BcEwW', 'track'],
-    ['https://m.bilibili.com/video/av170001', true, 'bili:video:av170001', 'track'],
-    ['https://www.bilibili.com/medialist/detail/ml123456', true, 'bili:fav:123456', 'playlist'],
-    ['https://space.bilibili.com/999/favlist?fid=888777', true, 'bili:fav:888777', 'playlist'],
-    ['https://space.bilibili.com/1001/lists/2002', true, 'bili:season:1001:2002', 'playlist'],
-    ['https://space.bilibili.com/1001/lists/2002?type=series', true, 'bili:series:1001:2002', 'playlist'],
-    ['https://space.bilibili.com/1001/collectiondetail?sid=3003', true, 'bili:season:1001:3003', 'playlist'],
-    ['https://space.bilibili.com/1001/seriesdetail?sid=4004', true, 'bili:series:1001:4004', 'playlist'],
-    ['https://b23.tv/abc123X', true, 'bili:short:abc123X', 'playlist'],
-    ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', false, null, null],
-    ['https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M', false, null, null],
-    ['random text', false, null, null]
+
+  const patternInputs = [
+    ['https://www.bilibili.com/video/BV19Dq6BcEwW', 0],
+    ['bilibili.com/video/BV19Dq6BcEwW', 0],
+    ['m.bilibili.com/video/av170001', 0],
+    ['space.bilibili.com/1001/lists/2002', 0],
+    ['HTTPS://SPACE.BILIBILI.COM/1001/lists/2002', 0],
+    ['https://b23.tv/abc123X', 1],
+    ['https://www.b23.tv/abc123X', 1],
+    ['b23.tv/abc123X', 1],
+    ['bili:video:BV19Dq6BcEwW', 2],
+    ['bili:fav:123456', 2],
+    ['bili:season:1001:2002', 2],
+    ['bili:series:1001:2002', 2],
+    ['BV19Dq6BcEwW', 3],
+    ['bv19Dq6BcEwW', 3],
+    ['av170001', 4],
+    ['AV170001', 4],
+    ['ml123456', 5],
+    ['ML123456', 5]
   ];
-  for (const [input, matched, remoteId, kind] of cases) {
+  for (const [input, expectedPatternIdx] of patternInputs) {
+    const re = new RegExp(ext.manifest.urlPatterns[expectedPatternIdx], 'i');
+    assert.equal(re.test(input), true, `urlPatterns[${expectedPatternIdx}] should match ${input}`);
+    assert.equal(matchesAnyUrlPattern(ext.manifest, input), true, `urlPatterns should match ${input}`);
+  }
+
+  const cases = [
+    ['https://www.bilibili.com/video/BV19Dq6BcEwW/?p=2', true, true, 'bili:video:BV19Dq6BcEwW', 'track'],
+    ['bilibili.com/video/BV19Dq6BcEwW', true, true, 'bili:video:BV19Dq6BcEwW', 'track'],
+    ['https://m.bilibili.com/video/av170001', true, true, 'bili:video:av170001', 'track'],
+    ['m.bilibili.com/video/av170001', true, true, 'bili:video:av170001', 'track'],
+    ['https://www.bilibili.com/medialist/detail/ml123456', true, true, 'bili:fav:123456', 'playlist'],
+    ['https://space.bilibili.com/999/favlist?fid=888777', true, true, 'bili:fav:888777', 'playlist'],
+    ['https://space.bilibili.com/1001/lists/2002', true, true, 'bili:season:1001:2002', 'playlist'],
+    ['space.bilibili.com/1001/lists/2002', true, true, 'bili:season:1001:2002', 'playlist'],
+    ['https://space.bilibili.com/1001/lists/2002?type=series', true, true, 'bili:series:1001:2002', 'playlist'],
+    ['https://space.bilibili.com/1001/collectiondetail?sid=3003', true, true, 'bili:season:1001:3003', 'playlist'],
+    ['https://space.bilibili.com/1001/seriesdetail?sid=4004', true, true, 'bili:series:1001:4004', 'playlist'],
+    ['https://b23.tv/abc123X', true, true, 'bili:short:abc123X', 'playlist'],
+    ['https://www.b23.tv/abc123X', true, true, 'bili:short:abc123X', 'playlist'],
+    ['b23.tv/abc123X', true, true, 'bili:short:abc123X', 'playlist'],
+    ['bili:video:BV19Dq6BcEwW', true, true, 'bili:video:BV19Dq6BcEwW', 'track'],
+    ['bili:video:av170001', true, true, 'bili:video:av170001', 'track'],
+    ['bili:fav:123456', true, true, 'bili:fav:123456', 'playlist'],
+    ['bili:season:1001:2002', true, true, 'bili:season:1001:2002', 'playlist'],
+    ['bili:series:1001:2002', true, true, 'bili:series:1001:2002', 'playlist'],
+    ['BV19Dq6BcEwW', true, true, 'bili:video:BV19Dq6BcEwW', 'track'],
+    ['bv19Dq6BcEwW', true, true, 'bili:video:BV19Dq6BcEwW', 'track'],
+    ['av170001', true, true, 'bili:video:av170001', 'track'],
+    ['ml123456', true, true, 'bili:fav:123456', 'playlist'],
+    ['https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOp', false, false, null, null],
+    ['https://drive.google.com/file/d/1AbCdEfGhIjKlMnOp/view', false, false, null, null],
+    ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', false, false, null, null],
+    ['https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M', false, false, null, null],
+    ['random text', false, false, null, null]
+  ];
+  for (const [input, expectUrlPattern, matched, remoteId, kind] of cases) {
+    assert.equal(matchesAnyUrlPattern(ext.manifest, input), expectUrlPattern, `urlPatterns for ${input}`);
     const out = runCanHandle(ext, input);
-    assert.equal(out.matched, matched, `Input: ${input}`);
+    assert.equal(out.matched, matched, `canHandle for ${input}`);
     if (matched) {
-      assert.equal(out.remoteId, remoteId, `Input: ${input}`);
-      assert.equal(out.kind, kind, `Input: ${input}`);
+      assert.equal(out.remoteId, remoteId, `remoteId for ${input}`);
+      assert.equal(out.kind, kind, `kind for ${input}`);
       assert.ok(out.normalizedUrl);
     }
   }
@@ -612,6 +661,38 @@ test('resolveStream: Bilibili DASH/FLAC priority, bare IDs, and cookie privacy',
   for (const entry of logs) {
     assert.equal(entry.message.includes('secret_bili_token'), false);
   }
+
+  // Legacy bare BV...#cid format passes cid directly to playurl without extra view call.
+  let bareCidPlayurl = '';
+  let bareCidViewCalled = false;
+  const { ext: extCid, bridge: bridgeCid } = createBiliMock({
+    httpHandler: async ({ url }) => {
+      if (url.includes('/spi')) return { json: { code: 0, data: { b_3: 'B3' } } };
+      if (url.includes('/nav')) return { json: { code: 0, data: { wbi_img: { img_url: 'https://i0.hdslb.com/a/7cd084941338484aae1ad9425b84077c.png', sub_url: 'https://i0.hdslb.com/a/4932caff0ff746eab6f01bf08b70ac45.png' } } } };
+      if (url.includes('/x/web-interface/view')) {
+        bareCidViewCalled = true;
+        return { json: { code: 0, data: { bvid: 'BV1bareTest1', cid: 987654 } } };
+      }
+      if (url.includes('/x/player/wbi/playurl')) {
+        bareCidPlayurl = url;
+        return {
+          json: {
+            code: 0,
+            data: {
+              dash: {
+                audio: [{ id: 30232, baseUrl: 'https://upos-sz-mirrorcos.bilivideo.com/132k.m4s', mimeType: 'audio/mp4', bandwidth: 132000 }]
+              }
+            }
+          }
+        };
+      }
+      throw new Error('Unexpected URL ' + url);
+    }
+  });
+  const resCid = await runResolveStream(extCid, bridgeCid, { remoteTrackId: 'BV1bareTest1#445566' });
+  assert.equal(bareCidViewCalled, false);
+  assert.ok(bareCidPlayurl.includes('cid=445566'));
+  assert.equal(resCid.fileExtension, 'm4a');
 });
 
 test('qr_login startQrLogin and pollQrLogin handle pending, scanned, expired, confirmed (Set-Cookie & url fallback), and redact secrets', async () => {

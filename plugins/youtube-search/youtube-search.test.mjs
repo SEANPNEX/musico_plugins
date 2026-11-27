@@ -75,9 +75,9 @@ test('portability & manifest contract for youtube-search', () => {
   ]);
   assert.equal(m.defaultStreamQuality, 'standard');
   assert.equal(m.defaultDownloadQuality, 'highest');
-  assert.equal(m.urlPatterns.length, 2);
+  assert.equal(m.urlPatterns.length, 5);
   for (const pat of m.urlPatterns) {
-    assert.doesNotThrow(() => new RegExp(pat));
+    assert.doesNotThrow(() => new RegExp(pat, 'i'));
   }
   for (const h of m.permissions.hosts) {
     validateHostPattern(h);
@@ -90,26 +90,87 @@ test('portability & manifest contract for youtube-search', () => {
   );
 });
 
-test('canHandle recognizes YouTube / YouTube Music URLs and rejects Bilibili/other URLs', () => {
+function matchesAnyUrlPattern(manifest, candidate) {
+  const regexes = (manifest.urlPatterns || []).map((pat) => new RegExp(pat, 'i'));
+  return regexes.some((re) => re.test(String(candidate || '').trim()));
+}
+
+test('urlPatterns (case-insensitive) + canHandle cover all YouTube URLs, schemeless links, namespaced/playlist IDs, and reject Google Drive/other URLs', () => {
   const ext = loadExtension(PLUGIN_PATH, { strict: true, staticCheck: true });
-  const cases = [
-    ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', true, 'yt:dQw4w9WgXcQ', 'track'],
-    ['https://youtu.be/dQw4w9WgXcQ', true, 'yt:dQw4w9WgXcQ', 'track'],
-    ['https://www.youtube.com/shorts/dQw4w9WgXcQ', true, 'yt:dQw4w9WgXcQ', 'track'],
-    ['https://www.youtube.com/playlist?list=PL1234567890', true, 'yt:PL1234567890', 'playlist'],
-    ['https://music.youtube.com/playlist?list=OLAK5uy_abc12345', true, 'yt:OLAK5uy_abc12345', 'playlist'],
-    ['https://music.youtube.com/browse/MPREb_6h43ySO9duW', true, 'yt:MPREb_6h43ySO9duW', 'playlist'],
-    ['https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ', true, 'yt:RDdQw4w9WgXcQ', 'playlist'],
-    ['https://www.bilibili.com/video/BV19Dq6BcEwW', false, null, null],
-    ['https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M', false, null, null],
-    ['random text', false, null, null]
+
+  // Verify every pattern in manifest.urlPatterns matches its expected inputs case-insensitively.
+  const patternInputs = [
+    ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', 0],
+    ['https://music.youtube.com/watch?v=dQw4w9WgXcQ', 0],
+    ['https://m.youtube.com/shorts/dQw4w9WgXcQ', 0],
+    ['https://www.youtube.com/live/dQw4w9WgXcQ', 0],
+    ['https://www.youtube.com/v/dQw4w9WgXcQ', 0],
+    ['https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ', 0],
+    ['youtube-nocookie.com/embed/dQw4w9WgXcQ', 0],
+    ['music.youtube.com/browse/MPREb_6h43ySO9duW', 0],
+    ['HTTPS://WWW.YOUTUBE.COM/WATCH?v=dQw4w9WgXcQ', 0],
+    ['https://youtu.be/dQw4w9WgXcQ', 1],
+    ['https://www.youtu.be/dQw4w9WgXcQ', 1],
+    ['youtu.be/dQw4w9WgXcQ', 1],
+    ['yt:dQw4w9WgXcQ', 2],
+    ['yt:PL1234567890', 2],
+    ['PL1234567890', 3],
+    ['OLAK5uy_abc12345', 3],
+    ['MPREb_6h43ySO9duW', 3],
+    ['UU1234567890', 3],
+    ['FL1234567890', 3],
+    ['RD1234567890', 3],
+    ['LL1234567890', 3],
+    ['VLPL1234567890', 3],
+    ['RDMM', 4]
   ];
-  for (const [input, matched, remoteId, kind] of cases) {
+  for (const [input, expectedPatternIdx] of patternInputs) {
+    const re = new RegExp(ext.manifest.urlPatterns[expectedPatternIdx], 'i');
+    assert.equal(re.test(input), true, `urlPatterns[${expectedPatternIdx}] should match ${input}`);
+    assert.equal(matchesAnyUrlPattern(ext.manifest, input), true, `urlPatterns should match ${input}`);
+  }
+
+  const cases = [
+    ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', true, true, 'yt:dQw4w9WgXcQ', 'track'],
+    ['youtube.com/watch?v=dQw4w9WgXcQ', true, true, 'yt:dQw4w9WgXcQ', 'track'],
+    ['https://music.youtube.com/watch?v=dQw4w9WgXcQ', true, true, 'yt:dQw4w9WgXcQ', 'track'],
+    ['music.youtube.com/watch?v=dQw4w9WgXcQ', true, true, 'yt:dQw4w9WgXcQ', 'track'],
+    ['https://youtu.be/dQw4w9WgXcQ', true, true, 'yt:dQw4w9WgXcQ', 'track'],
+    ['youtu.be/dQw4w9WgXcQ', true, true, 'yt:dQw4w9WgXcQ', 'track'],
+    ['https://www.youtu.be/dQw4w9WgXcQ', true, true, 'yt:dQw4w9WgXcQ', 'track'],
+    ['https://www.youtube.com/shorts/dQw4w9WgXcQ', true, true, 'yt:dQw4w9WgXcQ', 'track'],
+    ['https://www.youtube.com/live/dQw4w9WgXcQ', true, true, 'yt:dQw4w9WgXcQ', 'track'],
+    ['https://www.youtube.com/embed/dQw4w9WgXcQ', true, true, 'yt:dQw4w9WgXcQ', 'track'],
+    ['https://www.youtube.com/v/dQw4w9WgXcQ', true, true, 'yt:dQw4w9WgXcQ', 'track'],
+    ['https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ', true, true, 'yt:dQw4w9WgXcQ', 'track'],
+    ['youtube-nocookie.com/embed/dQw4w9WgXcQ', true, true, 'yt:dQw4w9WgXcQ', 'track'],
+    ['https://www.youtube.com/playlist?list=PL1234567890', true, true, 'yt:PL1234567890', 'playlist'],
+    ['https://music.youtube.com/playlist?list=OLAK5uy_abc12345', true, true, 'yt:OLAK5uy_abc12345', 'playlist'],
+    ['https://music.youtube.com/browse/MPREb_6h43ySO9duW', true, true, 'yt:MPREb_6h43ySO9duW', 'playlist'],
+    ['music.youtube.com/browse/VLPL1234567890', true, true, 'yt:PL1234567890', 'playlist'],
+    ['https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ', true, true, 'yt:RDdQw4w9WgXcQ', 'playlist'],
+    ['yt:dQw4w9WgXcQ', true, true, 'yt:dQw4w9WgXcQ', 'track'],
+    ['yt:PL1234567890', true, true, 'yt:PL1234567890', 'playlist'],
+    ['PL1234567890', true, true, 'yt:PL1234567890', 'playlist'],
+    ['OLAK5uy_abc12345', true, true, 'yt:OLAK5uy_abc12345', 'playlist'],
+    ['VLPL1234567890', true, true, 'yt:PL1234567890', 'playlist'],
+    ['MPREb_6h43ySO9duW', true, true, 'yt:MPREb_6h43ySO9duW', 'playlist'],
+    ['RDMM', true, true, 'yt:RDMM', 'playlist'],
+    // Legacy bare 11-char video ID is supported by canHandle directly (not urlPatterns, to avoid false positives on 11-char words).
+    ['dQw4w9WgXcQ', false, true, 'yt:dQw4w9WgXcQ', 'track'],
+    ['https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOp', false, false, null, null],
+    ['https://drive.google.com/file/d/1AbCdEfGhIjKlMnOp/view', false, false, null, null],
+    ['https://www.bilibili.com/video/BV19Dq6BcEwW', false, false, null, null],
+    ['https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M', false, false, null, null],
+    ['random text', false, false, null, null]
+  ];
+  for (const [input, expectUrlPattern, matched, remoteId, kind] of cases) {
+    assert.equal(matchesAnyUrlPattern(ext.manifest, input), expectUrlPattern, `urlPatterns for ${input}`);
     const out = runCanHandle(ext, input);
-    assert.equal(out.matched, matched, `Input: ${input}`);
+    assert.equal(out.matched, matched, `canHandle for ${input}`);
     if (matched) {
-      assert.equal(out.remoteId, remoteId, `Input: ${input}`);
-      assert.equal(out.kind, kind, `Input: ${input}`);
+      assert.equal(out.remoteId, remoteId, `remoteId for ${input}`);
+      assert.equal(out.kind, kind, `kind for ${input}`);
       assert.ok(out.normalizedUrl);
     }
   }
@@ -537,4 +598,27 @@ test('resolveStream: Apple enforces MP4/AAC-only, honors req.quality/req.purpose
   const winM4a = await runFor('windows', 'm4a');
   assert.equal(winM4a.stream.fileExtension, 'm4a');
   assert.ok(winM4a.stream.url.includes('itag=140'));
+
+  // Legacy bare 11-char video ID resolves identically to yt:<id>.
+  const bareMock = createYtMock({
+    platform: 'macos',
+    httpHandler: async ({ url }) => {
+      if (url.includes('/sw.js_data')) return { text: ')]}\'\n["CgtScjNVNXhmS2xMcyj6"]' };
+      if (url.includes('/youtubei/v1/player')) {
+        return {
+          json: {
+            playabilityStatus: { status: 'OK' },
+            streamingData: { expiresInSeconds: '21540', adaptiveFormats }
+          }
+        };
+      }
+      if (url.includes('googlevideo.com')) {
+        return { status: 206, headers: { 'content-type': 'audio/mp4' }, text: 'ok' };
+      }
+      throw new Error('Unexpected URL ' + url);
+    }
+  });
+  const bareStream = await runResolveStream(bareMock.ext, bareMock.bridge, { remoteTrackId: 'dQw4w9WgXcQ' });
+  assert.equal(bareStream.fileExtension, 'm4a');
+  assert.ok(bareStream.url.includes('itag=140'));
 });

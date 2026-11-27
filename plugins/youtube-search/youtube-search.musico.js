@@ -25,8 +25,11 @@ var manifest = {
   defaultStreamQuality: 'standard',
   defaultDownloadQuality: 'highest',
   urlPatterns: [
-    '^https?://(www\\.|m\\.|music\\.)?youtube\\.com/(watch|playlist|browse|shorts|live|embed)',
-    '^https?://youtu\\.be/[A-Za-z0-9_-]{11}'
+    '^(https?://)?(www\\.|m\\.|music\\.)?youtube(-nocookie)?\\.com/(watch|playlist|browse|shorts|live|embed|v/)',
+    '^(https?://)?(www\\.)?youtu\\.be/[A-Za-z0-9_-]{11}',
+    '^yt:[A-Za-z0-9_-]{10,}$',
+    '^(PL|OLAK5uy_|MPREb_|UU|FL|RD|LL|VL)[A-Za-z0-9_-]{8,}$',
+    '^RDMM$'
   ],
   permissions: {
     hosts: [
@@ -502,7 +505,7 @@ function parseTarget(rawInput) {
     host === 'youtube.com' ||
     host.slice(-12) === '.youtube.com' ||
     host === 'youtube-nocookie.com' ||
-    host.slice(-20) === '.youtube-nocookie.com'
+    host.slice(-21) === '.youtube-nocookie.com'
   ) {
     var qVid = query.v && isYouTubeVideoId(query.v) ? query.v : null;
     var pVid = null;

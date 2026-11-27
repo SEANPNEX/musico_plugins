@@ -20,8 +20,12 @@ var manifest = {
   defaultStreamQuality: 'standard',
   defaultDownloadQuality: 'highest',
   urlPatterns: [
-    '^https?://(www\\.|m\\.|space\\.)?bilibili\\.com/',
-    '^https?://b23\\.tv/[A-Za-z0-9]+'
+    '^(https?://)?(www\\.|m\\.|space\\.)?bilibili\\.com/',
+    '^(https?://)?(www\\.)?b23\\.tv/[A-Za-z0-9]+',
+    '^bili:',
+    '^BV[0-9A-Za-z]{10,}$',
+    '^av[0-9]+$',
+    '^ml[0-9]+$'
   ],
   permissions: {
     hosts: [
