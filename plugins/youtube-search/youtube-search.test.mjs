@@ -53,7 +53,7 @@ test('portability & manifest contract for youtube-search', () => {
   assert.equal(m.apiVersion, 1);
   assert.equal(m.id, 'youtube-search');
   assert.equal(m.name, 'YouTube Search');
-  assert.equal(m.version, '1.2.0');
+  assert.equal(m.version, '1.2.1');
   assert.equal(m.author, 'SEANPNEX');
   assert.equal(m.badgeLabel, 'YouTube');
   assert.equal(

@@ -4,7 +4,7 @@ var manifest = {
   apiVersion: 1,
   id: 'youtube-search',
   name: 'YouTube Search',
-  version: '1.2.0',
+  version: '1.2.1',
   author: 'SEANPNEX',
   description: 'Search songs, albums, and playlists from YouTube and YouTube Music, plus import playlists, albums, mixes, single videos, and in-app web login.',
   badgeLabel: 'YouTube',

@@ -4,7 +4,7 @@ var manifest = {
   apiVersion: 1,
   id: 'bilibili-search',
   name: 'Bilibili Search',
-  version: '1.2.0',
+  version: '1.2.1',
   author: 'SEANPNEX',
   description: 'Search songs, multi-part videos (分P), and collections (合集) from Bilibili, plus import videos, favlists, collections, series, and QR login.',
   badgeLabel: 'Bilibili',

@@ -55,7 +55,7 @@ test('portability & manifest contract for bilibili-search (no album concept)', (
   assert.equal(m.apiVersion, 1);
   assert.equal(m.id, 'bilibili-search');
   assert.equal(m.name, 'Bilibili Search');
-  assert.equal(m.version, '1.2.0');
+  assert.equal(m.version, '1.2.1');
   assert.equal(m.author, 'SEANPNEX');
   assert.equal(m.badgeLabel, 'Bilibili');
   assert.equal(
