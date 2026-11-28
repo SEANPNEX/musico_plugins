@@ -1,8 +1,6 @@
 # NetEase Cloud Music (`com.seanpnex.musico.netease`)
 
-Single-file Musico API v1 extension for **NetEase Cloud Music** (`music.163.com`) supporting cloud playlists, albums, artists, single songs, short links (`163cn.tv` / `163cn.link`), cloud search, and EAPI stream resolution.
-
-> **Lyrics note:** This extension intentionally omits the `"lyrics"` capability because Musico includes built-in NetEase lyrics search.
+Single-file Musico API v1 extension for **NetEase Cloud Music** (`music.163.com`) supporting cloud playlists, albums, artists, single songs, short links (`163cn.tv` / `163cn.link`), cloud search, lyrics search, QR code login, and EAPI stream resolution.
 
 ## Install & Auto-Update
 
@@ -22,6 +20,9 @@ Import either URL in Musico via **Extensions → Import from HTTPS URL** (or dow
 - **Cloud Search (`search`)**
   - Search kinds: `track`, `playlist`, `album`, and `all`
   - Uses `/eapi/cloudsearch/pc` with automatic `/eapi/search/get` fallback and `off:<n>` pagination
+- **Lyrics Search (`searchLyrics`)**
+  - Searches tracks via `/api/search/get/web` with `/api/cloudsearch/pc` fallback (`limit <= 8`), ranks top 5 matches, and fetches `/api/song/lyric?id=...&lv=1&tv=1`
+  - Normalizes NetEase inline JSON credit lines (`{"t":...,"c":[{"tx":"..."}]}`), strips metadata-only/empty timestamp lines, preserves bilingual `tlyric` translations in `translatedLyrics`, and detects instrumental (`nolyric` / `pureMusic`) tracks
 - **Stream Resolution (`resolveStream`)**
   - Pure portable JS AES-128-ECB + EAPI signing/decryption (zero Node/DOM globals; compatible with Apple JavaScriptCore, Android QuickJS, and Windows Jint)
   - Primary `/eapi/song/enhance/player/url/v1` with automatic quality fallback and legacy `/eapi/song/enhance/player/url` fallback
@@ -58,11 +59,12 @@ node plugins/netease-cloud/netease-cloud.test.mjs
 
 # Validate via local conformance runner
 node scripts/runner.mjs plugins/netease-cloud/netease-cloud.musico.js can-handle "https://music.163.com/#/playlist?id=6792103822"
+node scripts/runner.mjs plugins/netease-cloud/netease-cloud.musico.js search-lyrics "晴天" --artist "周杰伦" --duration 269
 ```
 
 ## QR Code Login & Auto-Update
 
-`netease-cloud.musico.js` (`v1.2.0`) declares `"qr_login"` (`startQrLogin(ctx)` / `pollQrLogin(ctx, req)`) and includes an HTTPS `updateUrl` in its manifest:
+`netease-cloud.musico.js` (`v1.3.0`) declares `"qr_login"` (`startQrLogin(ctx)` / `pollQrLogin(ctx, req)`) and `"lyrics"` (`searchLyrics(ctx, req)`), and includes an HTTPS `updateUrl` in its manifest:
 
 - Open the extension card in Musico (**Sign In with QR Code**) and scan with the NetEase Cloud Music mobile app.
 - On confirmation (`803`), Musico automatically extracts and saves your private session cookie (`MUSIC_U` / `__csrf`) without logging secrets.

@@ -4,12 +4,12 @@ var manifest = {
   apiVersion: 1,
   id: 'com.seanpnex.musico.netease',
   name: 'NetEase Cloud Music',
-  version: '1.2.0',
+  version: '1.3.0',
   author: 'SEANPNEX',
-  description: 'Playlists, albums, artists, single tracks, cloud search, QR code login, and EAPI stream resolution for NetEase Cloud Music.',
+  description: 'Playlists, albums, artists, single tracks, cloud search, lyrics search, QR code login, and EAPI stream resolution for NetEase Cloud Music.',
   badgeLabel: 'NetEase',
   updateUrl: 'https://github.com/SEANPNEX/musico_plugins/releases/latest/download/netease-cloud.musicoext',
-  capabilities: ['playlist', 'stream', 'search', 'cookie', 'qr_login', 'proxy'],
+  capabilities: ['playlist', 'stream', 'search', 'lyrics', 'cookie', 'qr_login', 'proxy'],
   searchKinds: ['track', 'playlist', 'album'],
   qualities: [
     { id: 'highest', label: 'Highest Available', badge: 'Hi-Res', lossless: true },
@@ -2019,12 +2019,398 @@ async function pollQrLogin(ctx, req) {
   };
 }
 
+function formatLrcTimestamp(seconds) {
+  var safeSec = typeof seconds === 'number' && isFinite(seconds) && seconds > 0 ? seconds : 0;
+  var totalHundredths = Math.max(0, Math.round(safeSec * 100));
+  var mins = Math.floor(totalHundredths / 6000);
+  var rem = totalHundredths % 6000;
+  var secs = Math.floor(rem / 100);
+  var cs = rem % 100;
+  return '[' + padNum(mins, 2) + ':' + padNum(secs, 2) + '.' + padNum(cs, 2) + ']';
+}
+
+function normalizeNeteaseLyricBody(raw) {
+  if (raw === null || raw === undefined) return null;
+  var trimmed = String(raw).trim();
+  if (!trimmed) return null;
+
+  var rawLines = trimmed.split(/\r?\n/);
+  var lines = [];
+  for (var i = 0; i < rawLines.length; i++) {
+    var line = rawLines[i].trim();
+    if (!line) continue;
+
+    if (line.charAt(0) === '{' && line.charAt(line.length - 1) === '}') {
+      var parsedJson = null;
+      try {
+        parsedJson = JSON.parse(line);
+      } catch (e) {
+        parsedJson = null;
+      }
+      if (parsedJson && typeof parsedJson === 'object' && (Array.isArray(parsedJson.c) || typeof parsedJson.t === 'number')) {
+        var tokens = Array.isArray(parsedJson.c) ? parsedJson.c : [];
+        var parts = [];
+        for (var j = 0; j < tokens.length; j++) {
+          if (tokens[j] && tokens[j].tx !== undefined && tokens[j].tx !== null) {
+            parts.push(String(tokens[j].tx));
+          }
+        }
+        var text = parts.join('').trim();
+        if (text) {
+          var sec = (typeof parsedJson.t === 'number' && isFinite(parsedJson.t) ? parsedJson.t : 0) / 1000;
+          lines.push(formatLrcTimestamp(sec) + text);
+        }
+        continue;
+      }
+    }
+
+    // Strip LRC metadata-only tag lines (e.g. [ti:...], [ar:...], [al:...], [by:...], [offset:...]).
+    if (/^\[[A-Za-z#][^\]]*\]\s*$/.test(line)) {
+      continue;
+    }
+
+    // Strip timestamp-only lines with no lyric text after the timestamp tag(s).
+    if (/^(?:\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\])+\s*$/.test(line)) {
+      continue;
+    }
+
+    lines.push(line);
+  }
+
+  var result = lines.join('\n').trim();
+  return result || null;
+}
+
+function hasTimedLrcLines(text) {
+  return /^\s*\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\]/m.test(String(text || ''));
+}
+
+function normalizeLyricsCompareKey(str) {
+  return String(str || '')
+    .toLowerCase()
+    .replace(/[\s\u3000\-_.,!?;:'"()[\]{}（）【】《》/\\]+/g, '')
+    .trim();
+}
+
+function lyricTextSimilarity(a, b) {
+  var ka = normalizeLyricsCompareKey(a);
+  var kb = normalizeLyricsCompareKey(b);
+  if (!ka || !kb) return 0;
+  if (ka === kb) return 1;
+  if (ka.indexOf(kb) >= 0 || kb.indexOf(ka) >= 0) {
+    var minLen = Math.min(ka.length, kb.length);
+    var maxLen = Math.max(ka.length, kb.length);
+    return Math.max(0.75, minLen / maxLen);
+  }
+  if (ka.length < 2 || kb.length < 2) return 0;
+  var bigramsA = {};
+  var countA = 0;
+  for (var i = 0; i < ka.length - 1; i++) {
+    var bg = ka.slice(i, i + 2);
+    bigramsA[bg] = (bigramsA[bg] || 0) + 1;
+    countA++;
+  }
+  var intersection = 0;
+  var countB = 0;
+  for (var j = 0; j < kb.length - 1; j++) {
+    var bgB = kb.slice(j, j + 2);
+    countB++;
+    if (bigramsA[bgB] > 0) {
+      bigramsA[bgB]--;
+      intersection++;
+    }
+  }
+  return (2 * intersection) / (countA + countB);
+}
+
+function preScoreLyricsSong(song, title, artist, album, durationSec) {
+  var score = 0;
+  if (title) {
+    score += lyricTextSimilarity(song.title, title) * 50;
+  }
+  if (artist) {
+    score += lyricTextSimilarity(song.artist, artist) * 30;
+  }
+  if (album && song.album) {
+    score += lyricTextSimilarity(song.album, album) * 5;
+  }
+  if (durationSec && durationSec > 0 && song.durationSec && song.durationSec > 0) {
+    var diff = Math.abs(song.durationSec - durationSec);
+    if (diff <= 2) score += 20;
+    else if (diff <= 6) score += 12;
+    else if (diff <= 12) score += 4;
+  }
+  return score;
+}
+
+function selectTopLyricSongs(songs, title, artist, album, durationSec, limit) {
+  var scored = [];
+  for (var i = 0; i < songs.length; i++) {
+    scored.push({
+      song: songs[i],
+      idx: i,
+      score: preScoreLyricsSong(songs[i], title, artist, album, durationSec)
+    });
+  }
+  scored.sort(function (a, b) {
+    if (Math.abs(a.score - b.score) > 0.001) {
+      return b.score - a.score;
+    }
+    return a.idx - b.idx;
+  });
+  var out = [];
+  var maxCount = Math.min(limit, scored.length);
+  for (var k = 0; k < maxCount; k++) {
+    out.push(scored[k].song);
+  }
+  return out;
+}
+
+function buildNeteaseWebHeaders(ctx, rawCookie, contentType) {
+  var auth = buildCookieAndHeader(ctx, rawCookie);
+  var headers = {
+    Referer: 'https://music.163.com/',
+    Origin: 'https://music.163.com',
+    'User-Agent': auth.profile.userAgent,
+    Accept: 'application/json',
+    Cookie: auth.cookieHeader
+  };
+  if (contentType) {
+    headers['Content-Type'] = contentType;
+  }
+  return headers;
+}
+
+function isNeteaseRateLimitCode(code) {
+  return code === 405 || code === 406 || code === 429 || code === -460 || code === -462;
+}
+
+function decodeLyricsSearchSongs(resText) {
+  var parsed;
+  try {
+    parsed = JSON.parse(String(resText || '{}'));
+  } catch (e) {
+    return { valid: false, songs: [], code: null };
+  }
+  var apiCode = parsed && typeof parsed.code === 'number' ? parsed.code : 200;
+  if (isNeteaseRateLimitCode(apiCode)) {
+    throw extError('RATE_LIMITED', 'NetEase rate limit or risk control (code ' + String(apiCode) + ').');
+  }
+  var rawSongs = parsed && parsed.result && Array.isArray(parsed.result.songs) ? parsed.result.songs : [];
+  var songs = [];
+  for (var i = 0; i < rawSongs.length; i++) {
+    var s = rawSongs[i];
+    if (!s || s.id === undefined || s.id === null) continue;
+    var name = s.name ? String(s.name).trim() : '';
+    if (!name) continue;
+    var artistName = extractArtistNames(s.ar || s.artists);
+    var alObj = s.al || s.album || null;
+    var albumName = alObj && alObj.name ? String(alObj.name).trim() : '';
+    var ms = typeof s.dt === 'number' ? s.dt : (typeof s.duration === 'number' ? s.duration : 0);
+    var sec = ms > 0 ? ms / 1000 : null;
+    songs.push({
+      id: String(s.id).trim(),
+      title: name,
+      artist: artistName,
+      album: albumName || null,
+      durationSec: sec
+    });
+  }
+  return { valid: true, songs: songs, code: apiCode };
+}
+
+async function searchLyricsSongs(ctx, keyword, cookie) {
+  var encodedKeyword = encodeURIComponent(keyword);
+  var primaryHeaders = buildNeteaseWebHeaders(ctx, cookie, 'application/x-www-form-urlencoded');
+  var primaryForm = 's=' + encodedKeyword + '&type=1&offset=0&limit=8';
+
+  try {
+    var primaryRes = await ctx.http.request({
+      method: 'POST',
+      url: 'https://music.163.com/api/search/get/web',
+      headers: primaryHeaders,
+      body: primaryForm,
+      followRedirects: true,
+      timeoutMs: 15000
+    });
+    if (primaryRes.status === 429 || primaryRes.status === 503) {
+      throw extError('RATE_LIMITED', 'Rate limited by NetEase Cloud Music.');
+    }
+    if (primaryRes.status >= 200 && primaryRes.status < 300) {
+      var decodedPrimary = decodeLyricsSearchSongs(primaryRes.text);
+      if (decodedPrimary.songs.length > 0) {
+        return decodedPrimary.songs;
+      }
+    }
+  } catch (err) {
+    if (err && err.code === 'RATE_LIMITED') {
+      throw err;
+    }
+    ctx.log.warn('lyrics search/get/web failed, falling back to /api/cloudsearch/pc: ' + String((err && err.message) || err));
+  }
+
+  var fallbackUrl = 'https://music.163.com/api/cloudsearch/pc?s=' + encodedKeyword + '&type=1&offset=0&limit=8';
+  var fallbackRes = await ctx.http.request({
+    method: 'GET',
+    url: fallbackUrl,
+    headers: buildNeteaseWebHeaders(ctx, cookie, null),
+    followRedirects: true,
+    timeoutMs: 15000
+  });
+  if (fallbackRes.status === 401 || fallbackRes.status === 403) {
+    throw extError('AUTH_REQUIRED', 'NetEase authentication required or cookie expired.');
+  }
+  if (fallbackRes.status === 429 || fallbackRes.status === 503) {
+    throw extError('RATE_LIMITED', 'Rate limited by NetEase Cloud Music.');
+  }
+  if (fallbackRes.status >= 400) {
+    throw extError('NETWORK_ERROR', 'NetEase lyrics search returned HTTP ' + String(fallbackRes.status));
+  }
+  var decodedFallback = decodeLyricsSearchSongs(fallbackRes.text);
+  if (!decodedFallback.valid) {
+    throw extError('NETWORK_ERROR', 'Unexpected non-JSON response from NetEase lyrics search.');
+  }
+  if (decodedFallback.code === 301 || decodedFallback.code === 401 || decodedFallback.code === 20001 || decodedFallback.code === 20002) {
+    throw extError('AUTH_REQUIRED', 'NetEase login cookie required (code ' + String(decodedFallback.code) + ').');
+  }
+  return decodedFallback.songs;
+}
+
+async function fetchSongLyricCandidate(ctx, song, cookie) {
+  var lyricUrl = 'https://music.163.com/api/song/lyric?id=' + encodeURIComponent(song.id) + '&lv=1&tv=1';
+  var res;
+  try {
+    res = await ctx.http.request({
+      method: 'GET',
+      url: lyricUrl,
+      headers: buildNeteaseWebHeaders(ctx, cookie, null),
+      followRedirects: true,
+      timeoutMs: 15000
+    });
+  } catch (err) {
+    if (err && err.code === 'RATE_LIMITED') {
+      throw err;
+    }
+    return null;
+  }
+
+  if (res.status === 429 || res.status === 503) {
+    throw extError('RATE_LIMITED', 'Rate limited by NetEase Cloud Music.');
+  }
+  if (res.status < 200 || res.status >= 300) {
+    return null;
+  }
+
+  var payload;
+  try {
+    payload = JSON.parse(String(res.text || '{}'));
+  } catch (e) {
+    return null;
+  }
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  if (typeof payload.code === 'number' && isNeteaseRateLimitCode(payload.code)) {
+    throw extError('RATE_LIMITED', 'NetEase rate limit or risk control (code ' + String(payload.code) + ').');
+  }
+
+  if (payload.nolyric === true || payload.pureMusic === true) {
+    return {
+      externalId: song.id,
+      title: song.title,
+      artist: song.artist,
+      album: song.album,
+      durationSec: song.durationSec,
+      syncedLyrics: null,
+      plainLyrics: null,
+      translatedLyrics: null,
+      instrumental: true
+    };
+  }
+
+  var primaryRaw = normalizeNeteaseLyricBody(payload.lrc && payload.lrc.lyric);
+  if (!primaryRaw) {
+    return null;
+  }
+  var transRaw = normalizeNeteaseLyricBody(payload.tlyric && payload.tlyric.lyric);
+  var isTimed = hasTimedLrcLines(primaryRaw);
+
+  return {
+    externalId: song.id,
+    title: song.title,
+    artist: song.artist,
+    album: song.album,
+    durationSec: song.durationSec,
+    syncedLyrics: isTimed ? primaryRaw : null,
+    plainLyrics: isTimed ? null : primaryRaw,
+    translatedLyrics: transRaw || null,
+    instrumental: false
+  };
+}
+
+async function searchLyrics(ctx, req) {
+  var title = String((req && req.title) || '').trim();
+  var artist = String((req && req.artist) || '').trim();
+  var album = req && req.album ? String(req.album).trim() : '';
+  var rawDur = req && typeof req.durationSec === 'number'
+    ? req.durationSec
+    : (req && typeof req.duration === 'number' ? req.duration : null);
+  var durationSec = typeof rawDur === 'number' && isFinite(rawDur) && rawDur > 0 ? rawDur : null;
+  var cookie = req && req.cookie ? String(req.cookie) : null;
+
+  var keywordParts = [];
+  if (title) keywordParts.push(title);
+  if (artist) keywordParts.push(artist);
+  var keyword = keywordParts.join(' ');
+  if (!keyword && req && req.query) {
+    keyword = String(req.query).trim();
+  }
+  if (!keyword) {
+    return [];
+  }
+
+  ctx.log.info('searchLyrics query=' + keyword);
+
+  var songs = await searchLyricsSongs(ctx, keyword, cookie);
+  if (songs.length === 0) {
+    return [];
+  }
+
+  var topSongs = selectTopLyricSongs(songs, title, artist, album, durationSec, 5);
+  var fetched = await Promise.all(
+    topSongs.map(function (song) {
+      return fetchSongLyricCandidate(ctx, song, cookie);
+    })
+  );
+
+  var candidates = [];
+  var seen = {};
+  for (var i = 0; i < fetched.length; i++) {
+    var cand = fetched[i];
+    if (!cand) continue;
+    var preview = String(cand.syncedLyrics || cand.plainLyrics || '').slice(0, 80);
+    var dedupKey = [
+      normalizeLyricsCompareKey(cand.title),
+      normalizeLyricsCompareKey(cand.artist),
+      cand.syncedLyrics ? '1' : '0',
+      cand.instrumental ? 'I' : 'L',
+      preview
+    ].join('|');
+    if (seen[dedupKey]) continue;
+    seen[dedupKey] = true;
+    candidates.push(cand);
+  }
+
+  return candidates;
+}
+
 module.exports = {
   manifest: manifest,
   canHandle: canHandle,
   fetchCollection: fetchCollection,
   resolveStream: resolveStream,
   search: search,
+  searchLyrics: searchLyrics,
   startQrLogin: startQrLogin,
   pollQrLogin: pollQrLogin
 };

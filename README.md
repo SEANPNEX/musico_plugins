@@ -23,7 +23,7 @@ https://github.com/SEANPNEX/musico_plugins/releases/latest/download/musico-plugi
 |---|---|---|---|---|---|---|---|
 | **YouTube Search** | `youtube-search` | `1.2.1` | `search`, `playlist`, `stream`, `cookie`, `web_login`, `proxy` | `track`, `playlist`, `album` | [`youtube-search.musicoext`](https://github.com/SEANPNEX/musico_plugins/releases/latest/download/youtube-search.musicoext) | [`youtube-search.musico.js`](plugins/youtube-search/youtube-search.musico.js) | [README](plugins/youtube-search/README.md) |
 | **Bilibili Search** | `bilibili-search` | `1.2.1` | `search`, `playlist`, `stream`, `cookie`, `qr_login`, `proxy` | `track`, `playlist` | [`bilibili-search.musicoext`](https://github.com/SEANPNEX/musico_plugins/releases/latest/download/bilibili-search.musicoext) | [`bilibili-search.musico.js`](plugins/bilibili-search/bilibili-search.musico.js) | [README](plugins/bilibili-search/README.md) |
-| **NetEase Cloud Music** | `com.seanpnex.musico.netease` | `1.2.0` | `playlist`, `stream`, `search`, `cookie`, `qr_login`, `proxy` | `track`, `playlist`, `album` | [`netease-cloud.musicoext`](https://github.com/SEANPNEX/musico_plugins/releases/latest/download/netease-cloud.musicoext) | [`netease-cloud.musico.js`](plugins/netease-cloud/netease-cloud.musico.js) | [README](plugins/netease-cloud/README.md) |
+| **NetEase Cloud Music** | `com.seanpnex.musico.netease` | `1.3.0` | `playlist`, `stream`, `search`, `lyrics`, `cookie`, `qr_login`, `proxy` | `track`, `playlist`, `album` | [`netease-cloud.musicoext`](https://github.com/SEANPNEX/musico_plugins/releases/latest/download/netease-cloud.musicoext) | [`netease-cloud.musico.js`](plugins/netease-cloud/netease-cloud.musico.js) | [README](plugins/netease-cloud/README.md) |
 | **Apple Music** | `com.seanpnex.musico.applemusic` | `1.0.0` | `search`, `playlist`, `stream`, `lyrics`, `cookie`, `proxy` | `track`, `playlist`, `album` | [`apple-music.musicoext`](https://github.com/SEANPNEX/musico_plugins/releases/latest/download/apple-music.musicoext) | [`apple-music.musico.js`](plugins/apple-music/apple-music.musico.js) | [README](plugins/apple-music/README.md) |
 
 Individual HTTPS URLs for Musico's **Import from HTTPS URL** (and each plugin's `updateUrl`):
@@ -94,6 +94,7 @@ node scripts/runner.mjs --check plugins/bilibili-search/bilibili-search.musico.j
 node scripts/runner.mjs plugins/youtube-search/youtube-search.musico.js can-handle "https://www.youtube.com/playlist?list=..."
 node scripts/runner.mjs plugins/bilibili-search/bilibili-search.musico.js search "OST" --kind playlist --limit 10
 node scripts/runner.mjs plugins/netease-cloud/netease-cloud.musico.js search "query" --kind track --limit 10
+node scripts/runner.mjs plugins/netease-cloud/netease-cloud.musico.js search-lyrics "晴天" --artist "周杰伦" --duration 269
 ```
 
 ## CI/CD & Releases

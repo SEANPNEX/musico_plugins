@@ -14,6 +14,7 @@ import {
   runPollQrLogin,
   runResolveStream,
   runSearch,
+  runSearchLyrics,
   runStartQrLogin,
   scanPortabilityViolations,
   validateHostPattern
@@ -79,15 +80,15 @@ test('manifest, exports, host allowlist, and strict portability check', () => {
   assert.equal(m.apiVersion, 1);
   assert.equal(m.id, 'com.seanpnex.musico.netease');
   assert.equal(m.name, 'NetEase Cloud Music');
-  assert.equal(m.version, '1.2.0');
+  assert.equal(m.version, '1.3.0');
   assert.equal(m.author, 'SEANPNEX');
   assert.equal(m.badgeLabel, 'NetEase');
   assert.equal(
     m.updateUrl,
     'https://github.com/SEANPNEX/musico_plugins/releases/latest/download/netease-cloud.musicoext'
   );
-  assert.deepEqual(plain(m.capabilities), ['playlist', 'stream', 'search', 'cookie', 'qr_login', 'proxy']);
-  assert.equal(m.capabilities.includes('lyrics'), false);
+  assert.deepEqual(plain(m.capabilities), ['playlist', 'stream', 'search', 'lyrics', 'cookie', 'qr_login', 'proxy']);
+  assert.equal(m.capabilities.includes('lyrics'), true);
   assert.deepEqual(plain(m.searchKinds), ['track', 'playlist', 'album']);
   assert.deepEqual(
     plain(m.qualities).map((q) => q.id),
@@ -100,7 +101,7 @@ test('manifest, exports, host allowlist, and strict portability check', () => {
 
   assert.deepEqual(
     Object.keys(ext.exportsObj).sort(),
-    ['canHandle', 'fetchCollection', 'manifest', 'pollQrLogin', 'resolveStream', 'search', 'startQrLogin']
+    ['canHandle', 'fetchCollection', 'manifest', 'pollQrLogin', 'resolveStream', 'search', 'searchLyrics', 'startQrLogin']
   );
 
   for (const host of m.permissions.hosts) {
@@ -860,5 +861,261 @@ test('qr_login startQrLogin and pollQrLogin follow Music163Api-Go EAPI flow and 
   assert.equal(
     bridge.logs.some((l) => l.message.includes(secretToken) || l.message.includes(csrfToken) || l.message.includes('MUSIC_U')),
     false
+  );
+});
+
+test('searchLyrics fetches /api/search/get/web + /api/song/lyric, normalizes JSON-lines, preserves translation, and strips metadata', async () => {
+  const ext = loadExtension(PLUGIN_PATH, { strict: true });
+  const requests = [];
+  const secretCookie = 'LYRICS_SECRET_MUSIC_U_5566';
+
+  const bridge = createHostBridge(ext.manifest, {
+    httpResponder: async ({ method, url, headers, body }) => {
+      requests.push({ method, url, headers, body });
+      if (url === 'https://music.163.com/api/search/get/web') {
+        assert.equal(method, 'POST');
+        assert.equal(headers.Referer, 'https://music.163.com/');
+        assert.equal(headers.Origin, 'https://music.163.com');
+        assert.match(headers.Cookie, new RegExp(`MUSIC_U=${secretCookie}`));
+        assert.match(body, /limit=8/);
+        return {
+          status: 200,
+          headers: {},
+          text: JSON.stringify({
+            code: 200,
+            result: {
+              songs: [
+                {
+                  id: 186016,
+                  name: '晴天',
+                  artists: [{ name: '周杰伦' }],
+                  album: { name: '叶惠美' },
+                  duration: 269000
+                },
+                {
+                  id: 186017,
+                  name: '晴天 (Live)',
+                  ar: [{ name: '周杰伦' }],
+                  al: { name: 'Live' },
+                  dt: 280000
+                }
+              ]
+            }
+          })
+        };
+      }
+      if (url === 'https://music.163.com/api/song/lyric?id=186016&lv=1&tv=1') {
+        assert.equal(method, 'GET');
+        assert.match(headers.Cookie, new RegExp(`MUSIC_U=${secretCookie}`));
+        return {
+          status: 200,
+          headers: {},
+          text: JSON.stringify({
+            code: 200,
+            lrc: {
+              lyric: [
+                '[ti:晴天]',
+                '[by:NetEase]',
+                '{"t":0,"c":[{"tx":"作词 : "},{"tx":"方文山"}]}',
+                '[00:10.00]   ',
+                '[00:28.90]故事的小黄花',
+                '[00:32.10]从出生那年就飘着'
+              ].join('\n')
+            },
+            tlyric: {
+              lyric: [
+                '[by:Translator]',
+                '[00:28.90]Little yellow flower of the story',
+                '[00:32.10]   ',
+                '[00:32.10]Floating since birth'
+              ].join('\n')
+            }
+          })
+        };
+      }
+      if (url === 'https://music.163.com/api/song/lyric?id=186017&lv=1&tv=1') {
+        return {
+          status: 200,
+          headers: {},
+          text: JSON.stringify({
+            code: 200,
+            lrc: {
+              lyric: '故事的小黄花\n从出生那年就飘着'
+            }
+          })
+        };
+      }
+      return { status: 404, headers: {}, text: '' };
+    }
+  });
+
+  const hits = await runSearchLyrics(ext, bridge, {
+    title: '晴天',
+    artist: '周杰伦',
+    album: '叶惠美',
+    durationSec: 269,
+    cookie: secretCookie
+  });
+
+  assert.equal(hits.length, 2);
+  assert.equal(hits[0].externalId, '186016');
+  assert.equal(hits[0].title, '晴天');
+  assert.equal(hits[0].artist, '周杰伦');
+  assert.equal(hits[0].album, '叶惠美');
+  assert.equal(hits[0].durationSec, 269);
+  assert.equal(hits[0].instrumental, false);
+  assert.equal(
+    hits[0].syncedLyrics,
+    '[00:00.00]作词 : 方文山\n[00:28.90]故事的小黄花\n[00:32.10]从出生那年就飘着'
+  );
+  assert.equal(hits[0].plainLyrics, null);
+  assert.equal(
+    hits[0].translatedLyrics,
+    '[00:28.90]Little yellow flower of the story\n[00:32.10]Floating since birth'
+  );
+
+  // Untimed lyrics populate plainLyrics instead of syncedLyrics
+  assert.equal(hits[1].externalId, '186017');
+  assert.equal(hits[1].syncedLyrics, null);
+  assert.equal(hits[1].plainLyrics, '故事的小黄花\n从出生那年就飘着');
+  assert.equal(hits[1].translatedLyrics, null);
+
+  assert.equal(
+    bridge.logs.some((l) => l.message.includes(secretCookie) || l.message.includes('MUSIC_U')),
+    false
+  );
+});
+
+test('searchLyrics falls back to /api/cloudsearch/pc and caps lyric fetches to top 5 ranked songs', async () => {
+  const ext = loadExtension(PLUGIN_PATH, { strict: true });
+  const lyricRequests = [];
+
+  const songs = Array.from({ length: 8 }, (_, idx) => ({
+    id: 500 + idx,
+    name: idx === 6 ? 'Target Song' : `Other ${idx}`,
+    ar: [{ name: idx === 6 ? 'Target Artist' : `Artist ${idx}` }],
+    al: { name: 'Album' },
+    dt: idx === 6 ? 210000 : 120000 + idx * 1000
+  }));
+
+  const bridge = createHostBridge(ext.manifest, {
+    httpResponder: async ({ method, url }) => {
+      if (url === 'https://music.163.com/api/search/get/web') {
+        return { status: 502, headers: {}, text: 'bad gateway' };
+      }
+      if (url.startsWith('https://music.163.com/api/cloudsearch/pc?')) {
+        assert.equal(method, 'GET');
+        assert.match(url, /limit=8/);
+        return {
+          status: 200,
+          headers: {},
+          text: JSON.stringify({ code: 200, result: { songs } })
+        };
+      }
+      if (url.startsWith('https://music.163.com/api/song/lyric?')) {
+        const match = url.match(/id=(\d+)/);
+        const songId = match ? match[1] : '';
+        lyricRequests.push(songId);
+        return {
+          status: 200,
+          headers: {},
+          text: JSON.stringify({
+            code: 200,
+            lrc: { lyric: `[00:01.00]Lyric for ${songId}` }
+          })
+        };
+      }
+      return { status: 404, headers: {}, text: '' };
+    }
+  });
+
+  const hits = await runSearchLyrics(ext, bridge, {
+    title: 'Target Song',
+    artist: 'Target Artist',
+    durationSec: 210
+  });
+
+  assert.equal(lyricRequests.length, 5, 'Must fetch lyrics for at most 5 songs');
+  assert.equal(lyricRequests[0], '506', 'Best-matching song must be ranked first');
+  assert.equal(hits.length, 5);
+  assert.equal(hits[0].externalId, '506');
+  assert.equal(hits[0].syncedLyrics, '[00:01.00]Lyric for 506');
+});
+
+test('searchLyrics detects nolyric/pureMusic instrumental tracks, skips metadata-only lyrics, and handles empty/error cases', async () => {
+  const ext = loadExtension(PLUGIN_PATH, { strict: true });
+
+  // 1. Empty query issues zero HTTP calls
+  const noCallBridge = createHostBridge(ext.manifest, {
+    httpResponder: async () => {
+      throw new Error('Unexpected HTTP call on empty query');
+    }
+  });
+  const emptyHits = await runSearchLyrics(ext, noCallBridge, { title: '   ', artist: '  ' });
+  assert.deepEqual(plain(emptyHits), []);
+
+  // 2. Instrumental (nolyric + pureMusic) & metadata-only lyric skipping
+  const instBridge = createHostBridge(ext.manifest, {
+    httpResponder: async ({ url }) => {
+      if (url === 'https://music.163.com/api/search/get/web') {
+        return {
+          status: 200,
+          headers: {},
+          text: JSON.stringify({
+            code: 200,
+            result: {
+              songs: [
+                { id: 1, name: 'NoLyric Track', ar: [{ name: 'Composer' }], dt: 180000 },
+                { id: 2, name: 'PureMusic Track', ar: [{ name: 'Pianist' }], dt: 190000 },
+                { id: 3, name: 'Metadata Only', ar: [{ name: 'Nobody' }], dt: 200000 }
+              ]
+            }
+          })
+        };
+      }
+      if (url === 'https://music.163.com/api/song/lyric?id=1&lv=1&tv=1') {
+        return { status: 200, headers: {}, text: JSON.stringify({ code: 200, nolyric: true }) };
+      }
+      if (url === 'https://music.163.com/api/song/lyric?id=2&lv=1&tv=1') {
+        return { status: 200, headers: {}, text: JSON.stringify({ code: 200, pureMusic: true, lrc: { lyric: '' } }) };
+      }
+      if (url === 'https://music.163.com/api/song/lyric?id=3&lv=1&tv=1') {
+        return {
+          status: 200,
+          headers: {},
+          text: JSON.stringify({
+            code: 200,
+            lrc: { lyric: '[ti:Metadata Only]\n[ar:Nobody]\n[00:00.00]   \n{"t":0,"c":[{"tx":""}]}' }
+          })
+        };
+      }
+      return { status: 404, headers: {}, text: '' };
+    }
+  });
+
+  const instHits = await runSearchLyrics(ext, instBridge, { title: 'Track', artist: 'Composer' });
+  assert.equal(instHits.length, 2);
+  assert.equal(instHits[0].externalId, '1');
+  assert.equal(instHits[0].instrumental, true);
+  assert.equal(instHits[0].syncedLyrics, null);
+  assert.equal(instHits[0].plainLyrics, null);
+  assert.equal(instHits[1].externalId, '2');
+  assert.equal(instHits[1].instrumental, true);
+
+  // 3. Rate limit (429) and fallback HTTP 500 error propagation
+  const rateLimitBridge = createHostBridge(ext.manifest, {
+    httpResponder: async () => ({ status: 429, headers: {}, text: '' })
+  });
+  await assert.rejects(
+    () => runSearchLyrics(ext, rateLimitBridge, { title: 'Test', artist: 'Artist' }),
+    (err) => err.code === 'RATE_LIMITED'
+  );
+
+  const serverErrorBridge = createHostBridge(ext.manifest, {
+    httpResponder: async () => ({ status: 500, headers: {}, text: 'error' })
+  });
+  await assert.rejects(
+    () => runSearchLyrics(ext, serverErrorBridge, { title: 'Test', artist: 'Artist' }),
+    (err) => err.code === 'NETWORK_ERROR'
   );
 });
