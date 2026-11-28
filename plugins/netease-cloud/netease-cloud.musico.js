@@ -4,7 +4,7 @@ var manifest = {
   apiVersion: 1,
   id: 'com.seanpnex.musico.netease',
   name: 'NetEase Cloud Music',
-  version: '1.3.0',
+  version: '1.3.1',
   author: 'SEANPNEX',
   description: 'Playlists, albums, artists, single tracks, cloud search, lyrics search, QR code login, and EAPI stream resolution for NetEase Cloud Music.',
   badgeLabel: 'NetEase',
@@ -1866,45 +1866,149 @@ function splitSetCookieHeader(rawHeader) {
   if (!rawHeader || typeof rawHeader !== 'string') return [];
   var raw = rawHeader.trim();
   if (!raw) return [];
-  var parts = raw.split(/,(?=\s*[^;=,\s]+=)/);
   var out = [];
-  for (var i = 0; i < parts.length; i++) {
-    var seg = parts[i].trim();
-    if (seg) out.push(seg);
+  var lines = raw.split(/\r?\n/);
+  for (var li = 0; li < lines.length; li++) {
+    var line = lines[li].trim();
+    if (!line) continue;
+    var start = 0;
+    var inExpires = false;
+    for (var i = 0; i < line.length; i++) {
+      var ch = line.charAt(i);
+      if (!inExpires && (ch === 'e' || ch === 'E') && line.slice(i, i + 8).toLowerCase() === 'expires=') {
+        inExpires = true;
+        continue;
+      }
+      if (inExpires && ch === ';') {
+        inExpires = false;
+        continue;
+      }
+      if (!inExpires && ch === ',') {
+        var slice = line.slice(start, i).trim();
+        if (slice) out.push(slice);
+        start = i + 1;
+      }
+    }
+    var tail = line.slice(start).trim();
+    if (tail) out.push(tail);
   }
   return out;
 }
 
-function extractCookiesFromResponse(res) {
-  var list = [];
-  if (res && Array.isArray(res.setCookies) && res.setCookies.length > 0) {
-    for (var s = 0; s < res.setCookies.length; s++) {
-      var expanded = splitSetCookieHeader(res.setCookies[s]);
-      for (var e = 0; e < expanded.length; e++) {
-        list.push(expanded[e]);
-      }
+function isExpiredSetCookie(rawEntry) {
+  var parts = String(rawEntry || '').split(';');
+  for (var i = 1; i < parts.length; i++) {
+    var attr = parts[i].trim();
+    if (!attr) continue;
+    var eq = attr.indexOf('=');
+    var attrName = (eq >= 0 ? attr.slice(0, eq) : attr).trim().toLowerCase();
+    var attrVal = eq >= 0 ? attr.slice(eq + 1).trim() : '';
+    if (attrName === 'max-age') {
+      var maxAgeNum = Number(attrVal);
+      if (isFinite(maxAgeNum) && maxAgeNum <= 0) return true;
+    } else if (attrName === 'expires') {
+      if (/\b1970\b/.test(attrVal)) return true;
     }
-  } else if (res && res.headers && typeof res.headers['set-cookie'] === 'string') {
-    list = splitSetCookieHeader(res.headers['set-cookie']);
   }
+  return false;
+}
 
-  var musicU = '';
-  var csrf = '';
-  for (var i = 0; i < list.length; i++) {
-    var entry = String(list[i] || '').trim();
+function normalizeCookieTokenValue(rawVal) {
+  var val = String(rawVal == null ? '' : rawVal).trim();
+  if (val.length >= 2 && val.charAt(0) === '"' && val.charAt(val.length - 1) === '"') {
+    val = val.slice(1, -1).trim();
+  }
+  if (!val) return '';
+  var lower = val.toLowerCase();
+  if (lower === 'deleted' || lower === 'null' || lower === 'undefined') return '';
+  return val;
+}
+
+function scanCookieEntries(entries, targets, allowSemicolonList) {
+  if (!Array.isArray(entries)) return;
+  for (var i = 0; i < entries.length; i++) {
+    var entry = String(entries[i] || '').trim();
     if (!entry) continue;
+    if (allowSemicolonList) {
+      var segs = entry.split(';');
+      for (var si = 0; si < segs.length; si++) {
+        var seg = segs[si].trim();
+        if (!seg) continue;
+        var eqS = seg.indexOf('=');
+        if (eqS <= 0) continue;
+        var sName = seg.slice(0, eqS).trim();
+        var sVal = normalizeCookieTokenValue(seg.slice(eqS + 1));
+        if (!sVal) continue;
+        if (sName === 'MUSIC_U') targets.musicU = sVal;
+        else if (sName === '__csrf') targets.csrf = sVal;
+      }
+      continue;
+    }
+    if (isExpiredSetCookie(entry)) continue;
     var semi = entry.indexOf(';');
     var firstPair = (semi >= 0 ? entry.slice(0, semi) : entry).trim();
     var eq = firstPair.indexOf('=');
     if (eq <= 0) continue;
     var name = firstPair.slice(0, eq).trim();
-    var val = firstPair.slice(eq + 1).trim();
+    var val = normalizeCookieTokenValue(firstPair.slice(eq + 1));
     if (!val) continue;
-    if (name === 'MUSIC_U' && !musicU) {
-      musicU = val;
-    } else if (name === '__csrf' && !csrf) {
-      csrf = val;
+    if (name === 'MUSIC_U') {
+      targets.musicU = val;
+    } else if (name === '__csrf') {
+      targets.csrf = val;
     }
+  }
+}
+
+function collectRawSetCookieHeaderEntries(headers) {
+  var out = [];
+  if (!headers || typeof headers !== 'object') return out;
+  var keys = Object.keys(headers);
+  for (var i = 0; i < keys.length; i++) {
+    var k = keys[i];
+    if (String(k).toLowerCase() !== 'set-cookie') continue;
+    var val = headers[k];
+    if (Array.isArray(val)) {
+      for (var ai = 0; ai < val.length; ai++) {
+        if (typeof val[ai] === 'string' && val[ai].trim()) {
+          var expA = splitSetCookieHeader(val[ai]);
+          for (var ea = 0; ea < expA.length; ea++) out.push(expA[ea]);
+        }
+      }
+    } else if (typeof val === 'string' && val.trim()) {
+      var expS = splitSetCookieHeader(val);
+      for (var es = 0; es < expS.length; es++) out.push(expS[es]);
+    }
+  }
+  return out;
+}
+
+function extractCookiesFromResponse(res, responseData) {
+  var setCookiesEntries = [];
+  if (res && Array.isArray(res.setCookies) && res.setCookies.length > 0) {
+    for (var s = 0; s < res.setCookies.length; s++) {
+      if (typeof res.setCookies[s] !== 'string') continue;
+      var expanded = splitSetCookieHeader(res.setCookies[s]);
+      for (var e = 0; e < expanded.length; e++) {
+        setCookiesEntries.push(expanded[e]);
+      }
+    }
+  }
+
+  var headerEntries = collectRawSetCookieHeaderEntries(res && res.headers);
+  var headerTargets = { musicU: '', csrf: '' };
+  scanCookieEntries(setCookiesEntries, headerTargets, false);
+  scanCookieEntries(headerEntries, headerTargets, false);
+
+  var musicU = headerTargets.musicU;
+  var csrf = headerTargets.csrf;
+
+  if ((!musicU || !csrf) && responseData && typeof responseData.cookie === 'string' && responseData.cookie.trim()) {
+    var bodyTargets = { musicU: '', csrf: '' };
+    var bodyCookieStr = responseData.cookie.trim();
+    scanCookieEntries(splitSetCookieHeader(bodyCookieStr), bodyTargets, true);
+    if (!musicU && bodyTargets.musicU) musicU = bodyTargets.musicU;
+    if (!csrf && bodyTargets.csrf) csrf = bodyTargets.csrf;
   }
 
   return {
@@ -1971,7 +2075,7 @@ async function pollQrLogin(ctx, req) {
   }
 
   if (code === 803) {
-    var extracted = extractCookiesFromResponse(result.response);
+    var extracted = extractCookiesFromResponse(result.response, data);
     if (!extracted.musicU) {
       return {
         status: 'error',

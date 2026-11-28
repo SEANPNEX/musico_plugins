@@ -64,7 +64,7 @@ node scripts/runner.mjs plugins/netease-cloud/netease-cloud.musico.js search-lyr
 
 ## QR Code Login & Auto-Update
 
-`netease-cloud.musico.js` (`v1.3.0`) declares `"qr_login"` (`startQrLogin(ctx)` / `pollQrLogin(ctx, req)`) and `"lyrics"` (`searchLyrics(ctx, req)`), and includes an HTTPS `updateUrl` in its manifest:
+`netease-cloud.musico.js` (`v1.3.1`) declares `"qr_login"` (`startQrLogin(ctx)` / `pollQrLogin(ctx, req)`) and `"lyrics"` (`searchLyrics(ctx, req)`), and includes an HTTPS `updateUrl` in its manifest:
 
 - Open the extension card in Musico (**Sign In with QR Code**) and scan with the NetEase Cloud Music mobile app.
 - On confirmation (`803`), Musico automatically extracts and saves your private session cookie (`MUSIC_U` / `__csrf`) without logging secrets.

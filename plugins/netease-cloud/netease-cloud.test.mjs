@@ -80,7 +80,7 @@ test('manifest, exports, host allowlist, and strict portability check', () => {
   assert.equal(m.apiVersion, 1);
   assert.equal(m.id, 'com.seanpnex.musico.netease');
   assert.equal(m.name, 'NetEase Cloud Music');
-  assert.equal(m.version, '1.3.0');
+  assert.equal(m.version, '1.3.1');
   assert.equal(m.author, 'SEANPNEX');
   assert.equal(m.badgeLabel, 'NetEase');
   assert.equal(
@@ -860,6 +860,86 @@ test('qr_login startQrLogin and pollQrLogin follow Music163Api-Go EAPI flow and 
 
   assert.equal(
     bridge.logs.some((l) => l.message.includes(secretToken) || l.message.includes(csrfToken) || l.message.includes('MUSIC_U')),
+    false
+  );
+});
+
+test('qr_login pollQrLogin handles partial setCookies + headers fallback, skips expired clearing cookies, and supports body cookie fallback', async () => {
+  const ext = loadExtension(PLUGIN_PATH, { strict: true });
+
+  const validToken = 'QR_VALID_MUSIC_U_776655';
+  const validCsrf = 'csrf_valid_99';
+  let scenario = 'partial-setcookies-plus-header';
+
+  const bridge = createHostBridge(ext.manifest, {
+    httpResponder: async ({ url }) => {
+      if (url === 'https://music.163.com/eapi/login/qrcode/unikey') {
+        return { status: 200, headers: {}, text: JSON.stringify({ code: 200, unikey: 'unikey-edge-1' }) };
+      }
+      if (url === 'https://music.163.com/eapi/login/qrcode/client/login') {
+        if (scenario === 'partial-setcookies-plus-header') {
+          return {
+            status: 200,
+            headers: {
+              'set-cookie': `NMTID=nmt1, MUSIC_U=${validToken}; Path=/; HttpOnly, __csrf=${validCsrf}; Path=/`
+            },
+            setCookies: ['NMTID=nmt1'],
+            text: JSON.stringify({ code: 803 })
+          };
+        }
+        if (scenario === 'expired-then-valid') {
+          return {
+            status: 200,
+            headers: {
+              'Set-Cookie': [
+                'MUSIC_U=stale_old; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/',
+                `MUSIC_U=${validToken}; Max-Age=1296000; Expires=Thu, 31 Dec 2099 23:59:59 GMT; Path=/; HttpOnly`,
+                `__csrf=${validCsrf}; Path=/`
+              ]
+            },
+            text: JSON.stringify({ code: 803 })
+          };
+        }
+        if (scenario === 'json-cookie-fallback') {
+          return {
+            status: 200,
+            headers: {},
+            text: JSON.stringify({
+              code: 803,
+              cookie: `NMTID=abc; MUSIC_U=${validToken}; __csrf=${validCsrf}`
+            })
+          };
+        }
+      }
+      if (url === 'https://music.163.com/eapi/w/nuser/account/get') {
+        return { status: 200, headers: {}, text: JSON.stringify({ code: 200, profile: { nickname: 'EdgeNick' } }) };
+      }
+      return { status: 404, headers: {}, text: '' };
+    }
+  });
+
+  const session = await runStartQrLogin(ext, bridge);
+
+  // 1. Partial setCookies alongside full Set-Cookie header
+  const r1 = await runPollQrLogin(ext, bridge, { sessionId: session.sessionId });
+  assert.equal(r1.status, 'confirmed');
+  assert.equal(r1.cookie, `MUSIC_U=${validToken}; __csrf=${validCsrf}`);
+  assert.equal(r1.accountName, 'EdgeNick');
+
+  // 2. Expired / clearing MUSIC_U entry before valid entry
+  scenario = 'expired-then-valid';
+  const r2 = await runPollQrLogin(ext, bridge, { sessionId: session.sessionId });
+  assert.equal(r2.status, 'confirmed');
+  assert.equal(r2.cookie, `MUSIC_U=${validToken}; __csrf=${validCsrf}`);
+
+  // 3. JSON data.cookie fallback when headers omit Set-Cookie
+  scenario = 'json-cookie-fallback';
+  const r3 = await runPollQrLogin(ext, bridge, { sessionId: session.sessionId });
+  assert.equal(r3.status, 'confirmed');
+  assert.equal(r3.cookie, `MUSIC_U=${validToken}; __csrf=${validCsrf}`);
+
+  assert.equal(
+    bridge.logs.some((l) => l.message.includes(validToken) || l.message.includes(validCsrf) || l.message.includes('MUSIC_U')),
     false
   );
 });
